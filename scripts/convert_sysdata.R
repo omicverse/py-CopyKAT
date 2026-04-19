@@ -1,27 +1,60 @@
 #!/usr/bin/env Rscript
-# Convert copykat sysdata.rda -> parquet for pycopykat
-suppressPackageStartupMessages({
-  library(arrow)
-})
-load("/media/jason/T7/rerbulid/copykat-R/data/sysdata.rda")
+# Convert copykat sysdata.rda → parquet for pycopykat.
+# Inputs: SYSDATA_PATH env var (falls back to /media/jason/T7/rerbulid/copykat-R/data/sysdata.rda).
+# Outputs: written to data/ under the pycopykat repo root (resolved via this script's own location).
 
-# hg20 gene annotation
+if (!requireNamespace("arrow", quietly = TRUE)) {
+  stop("R package 'arrow' is required. Install with: install.packages('arrow')")
+}
+suppressPackageStartupMessages(library(arrow))
+
+# Resolve project root as the parent of the scripts/ directory containing this file.
+# sys.frame(1)$ofile errors at top-level Rscript (only populated under source()), so
+# wrap in tryCatch and fall back to parsing --file= from commandArgs.
+get_script_path <- function() {
+  ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
+  if (!is.null(ofile)) return(normalizePath(ofile))
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(normalizePath(sub("^--file=", "", file_arg[1])))
+  }
+  NULL
+}
+
+this_file <- get_script_path()
+if (is.null(this_file)) {
+  # Fallback: assume cwd is the repo root
+  project_root <- getwd()
+} else {
+  project_root <- normalizePath(file.path(dirname(this_file), ".."))
+}
+
+sysdata_path <- Sys.getenv("SYSDATA_PATH",
+                           unset = "/media/jason/T7/rerbulid/copykat-R/data/sysdata.rda")
+if (!file.exists(sysdata_path)) {
+  stop("sysdata.rda not found at: ", sysdata_path,
+       "\nSet SYSDATA_PATH env var to override.")
+}
+load(sysdata_path)
+
+data_dir <- file.path(project_root, "data")
+dir.create(data_dir, showWarnings = FALSE, recursive = TRUE)
+
 stopifnot(exists("full.anno"))
 arrow::write_parquet(as.data.frame(full.anno),
-                     "data/hg20_gene_anno.parquet")
+                     file.path(data_dir, "hg20_gene_anno.parquet"))
 
-# 220KB bin table
 stopifnot(exists("DNA.hg20"))
 arrow::write_parquet(as.data.frame(DNA.hg20),
-                     "data/hg20_220kb_bins.parquet")
+                     file.path(data_dir, "hg20_220kb_bins.parquet"))
 
-# Cell-cycle genes (cyclegenes is a data.frame with 1 factor column)
 stopifnot(exists("cyclegenes"))
 writeLines(as.character(cyclegenes[[1]]),
-           "data/hg20_cycle_genes.txt")
+           file.path(data_dir, "hg20_cycle_genes.txt"))
 
-cat("Wrote:\n",
-    "  data/hg20_gene_anno.parquet (", nrow(full.anno), " rows)\n",
-    "  data/hg20_220kb_bins.parquet (", nrow(DNA.hg20), " rows)\n",
-    "  data/hg20_cycle_genes.txt (", length(cyclegenes[[1]]), " genes)\n",
+cat("Wrote (to ", data_dir, "):\n",
+    "  hg20_gene_anno.parquet (", nrow(full.anno), " rows)\n",
+    "  hg20_220kb_bins.parquet (", nrow(DNA.hg20), " rows)\n",
+    "  hg20_cycle_genes.txt (", length(cyclegenes[[1]]), " genes)\n",
     sep = "")
