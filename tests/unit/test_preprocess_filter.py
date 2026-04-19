@@ -1,9 +1,12 @@
-"""Tests for pycopykat.preprocess.filter — stage-1 QC filtering."""
+"""Tests for pycopykat.preprocess.filter — stage-1 QC and chrom coverage."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from pycopykat.preprocess.filter import filter_cells_and_genes
+from pycopykat.preprocess.filter import (
+    filter_cells_and_genes,
+    filter_cells_by_chrom_coverage,
+)
 
 
 def test_filters_low_gene_cells():
@@ -55,3 +58,36 @@ def test_quality_flag_low_when_few_genes_remain():
     )
     _, stats = filter_cells_and_genes(mat, min_gene_per_cell=1, low_dr=0.05)
     assert stats["data_quality"] == "low"
+
+
+def test_chrom_coverage_requires_min_per_chrom():
+    # 3 chroms × 10 genes each, 2 cells
+    idx = pd.MultiIndex.from_arrays(
+        [[1] * 10 + [2] * 10 + [3] * 10, list(range(30))],
+        names=["chrom", "gene"],
+    )
+    mat = pd.DataFrame(np.ones((30, 2)), index=idx, columns=["c1", "c2"])
+    # c2 has no expression on chrom 3
+    mat.loc[(3, slice(None)), "c2"] = 0
+    chrom = mat.index.get_level_values("chrom").to_numpy()
+    out, dropped = filter_cells_by_chrom_coverage(mat.to_numpy(), chrom, ngene_chr=5)
+    assert dropped == [1]  # c2 dropped (index 1)
+    assert out.shape == (30, 1)
+
+
+def test_chrom_coverage_drops_when_total_nonzero_below_5():
+    # 3 chroms, 10 genes each, 1 cell with only 4 non-zero genes
+    chrom = np.array([1] * 10 + [2] * 10 + [3] * 10)
+    X = np.zeros((30, 1))
+    X[[0, 10, 20, 11], 0] = 1  # 4 non-zero
+    out, dropped = filter_cells_by_chrom_coverage(X, chrom, ngene_chr=1)
+    assert dropped == [0]
+    assert out.shape == (30, 0)
+
+
+def test_chrom_coverage_keeps_cells_with_enough_per_chrom():
+    chrom = np.array([1] * 10 + [2] * 10 + [3] * 10)
+    X = np.ones((30, 2))  # every gene expressed in both cells
+    out, dropped = filter_cells_by_chrom_coverage(X, chrom, ngene_chr=5)
+    assert dropped == []
+    assert out.shape == (30, 2)

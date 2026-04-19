@@ -6,6 +6,7 @@ remaining cells.
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -57,3 +58,46 @@ def filter_cells_and_genes(
         "data_quality": quality,
     }
     return mat3, stats
+
+
+def filter_cells_by_chrom_coverage(
+    X: np.ndarray,
+    chrom: np.ndarray,
+    *,
+    ngene_chr: int,
+) -> tuple[np.ndarray, list[int]]:
+    """Secondary cell filter requiring per-chromosome coverage.
+
+    Matches copykat.R lines ~84-96. A cell is dropped if either:
+
+    * the total number of non-zero genes is < 5, or
+    * any chromosome has fewer than ``ngene_chr`` non-zero genes.
+
+    Parameters
+    ----------
+    X
+        Genes × cells expression array, rows already sorted by abspos.
+    chrom
+        Length-``n_genes`` array of chromosome ids aligned with ``X`` rows.
+    ngene_chr
+        Minimum non-zero genes required per chromosome per cell.
+
+    Returns
+    -------
+    (filtered_X, dropped_cell_indices)
+    """
+    n_cells = X.shape[1]
+    unique_chroms = np.unique(chrom)
+    dropped: list[int] = []
+    for j in range(n_cells):
+        nz = X[:, j] > 0
+        if int(nz.sum()) < 5:
+            dropped.append(j)
+            continue
+        for k in unique_chroms:
+            if int((nz & (chrom == k)).sum()) < ngene_chr:
+                dropped.append(j)
+                break
+    keep_mask = np.ones(n_cells, dtype=bool)
+    keep_mask[dropped] = False
+    return X[:, keep_mask], dropped
