@@ -32,6 +32,7 @@ def ward_cluster_with_min_size(
     initial_k: int = 6,
     min_cells: int = 10,
     distance: str = "euclidean",
+    k_floor: int = 1,
 ) -> tuple[NDArray[np.int_], NDArray[np.float64]]:
     """Ward-link hierarchical clustering honouring a minimum cluster size.
 
@@ -46,6 +47,10 @@ def ward_cluster_with_min_size(
         Minimum members required per cluster.
     distance
         One of ``"euclidean"``, ``"pearson"``, ``"spearman"``.
+    k_floor
+        Minimum k the loop will step down to before giving up. ``k_floor=1``
+        returns a single cluster label when the constraint can't be honoured;
+        ``k_floor=2`` mirrors R copykat's ``baseline.norm.cl`` (``if km==2 break``).
 
     Returns
     -------
@@ -55,15 +60,22 @@ def ward_cluster_with_min_size(
     """
     if distance not in _DIST_FN:
         raise ValueError(f"distance must be one of {list(_DIST_FN)}, got {distance!r}")
+    if k_floor < 1:
+        raise ValueError(f"k_floor must be ≥ 1, got {k_floor}")
 
     d = _DIST_FN[distance](np.asarray(X, dtype=np.float64))
     Z = linkage(d, method="ward")
 
     k = int(initial_k)
-    while k > 1:
+    while k > k_floor:
         labels = fcluster(Z, t=k, criterion="maxclust")
         counts = np.bincount(labels)[1:]
         if counts.size > 0 and counts.min() >= min_cells:
             return labels.astype(np.int_), Z
         k -= 1
-    return np.ones(X.shape[0], dtype=np.int_), Z
+
+    # Hit the floor — return whatever that cut yields.
+    if k_floor == 1:
+        return np.ones(X.shape[0], dtype=np.int_), Z
+    labels = fcluster(Z, t=k_floor, criterion="maxclust")
+    return labels.astype(np.int_), Z
