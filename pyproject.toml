@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pycopykat"
+version = "0.1.0.dev0"
+description = "Python rewrite of CopyKAT (Gao et al. 2021) with Numba acceleration"
+readme = "README.md"
+license = "GPL-2.0-or-later"
+requires-python = ">=3.10,<3.13"
+authors = [{name = "Jason"}]
+dependencies = [
+  "numpy>=1.26,<3",
+  "scipy>=1.11",
+  "pandas>=2.1",
+  "scikit-learn>=1.4",
+  "numba>=0.59",
+  "matplotlib>=3.8",
+  "anndata>=0.10",
+  "pyreadr>=0.5",
+  "typer>=0.9",
+  "pyarrow>=14",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-benchmark>=4",
+  "hypothesis>=6",
+  "ruff>=0.4",
+  "mypy>=1.9",
+  "ipykernel",
+]
+
+[project.scripts]
+pycopykat = "pycopykat.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pycopykat"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "NPY"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
