@@ -21,7 +21,6 @@ Algorithm (verbatim against R copykat baseline.norm.cl.R):
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,30 +31,8 @@ from sklearn.exceptions import ConvergenceWarning
 from sklearn.metrics import silhouette_samples
 from sklearn.mixture import GaussianMixture
 
-from pycopykat.baseline._shared import ward_cluster_with_min_size
+from pycopykat.baseline._shared import BaselineResult, ward_cluster_with_min_size
 from pycopykat.kernels.distances import pdist_euclidean
-
-
-@dataclass(slots=True)
-class BaselineResult:
-    """Outputs of :func:`baseline_norm_cl`.
-
-    Attributes
-    ----------
-    basel
-        Per-gene baseline vector (gene-wise median over inferred diploid cells).
-    preN
-        Names of cells contributing to ``basel``.
-    warning
-        ``""`` on success, ``"unclassified.prediction"`` on low confidence.
-    labels
-        Cluster labels assigned to every input cell (1-based).
-    """
-
-    basel: NDArray[np.float64]
-    preN: list[str]
-    warning: str
-    labels: NDArray[np.int_]
 
 
 def baseline_norm_cl(

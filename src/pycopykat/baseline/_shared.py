@@ -1,12 +1,13 @@
-"""Shared helper for baseline estimation: Ward hierarchical clustering with a
-minimum cells-per-cluster constraint.
+"""Shared baseline utilities.
 
-Mirrors R copykat's behaviour of starting with ``k = 6`` cuts and decrementing
-until no cluster has fewer than ``min_cells`` members. Underlying distance
-kernels live in :mod:`pycopykat.kernels.distances`.
+* :func:`ward_cluster_with_min_size` — Ward hierarchical clustering with a
+  minimum cells-per-cluster constraint (R copykat backoff loop).
+* :class:`BaselineResult` — container returned by every baseline estimator
+  (auto / gmm / synthetic).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
@@ -18,6 +19,28 @@ from pycopykat.kernels.distances import (
     pdist_pearson,
     pdist_spearman,
 )
+
+
+@dataclass(slots=True)
+class BaselineResult:
+    """Outputs shared by all baseline estimators.
+
+    Attributes
+    ----------
+    basel
+        Per-gene baseline vector.
+    preN
+        Names of cells contributing to ``basel``.
+    warning
+        ``""`` on success, ``"unclassified.prediction"`` on low confidence.
+    labels
+        Cluster labels assigned to every input cell (1-based).
+    """
+
+    basel: NDArray[np.float64]
+    preN: list[str]
+    warning: str
+    labels: NDArray[np.int_]
 
 _DIST_FN: dict[str, Callable[[NDArray[np.floating]], NDArray[np.float64]]] = {
     "euclidean": pdist_euclidean,
