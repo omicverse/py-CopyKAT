@@ -85,5 +85,49 @@ def run(
     typer.echo(f"wrote outputs under {output_dir}")
 
 
+@app.command("run-h5ad")
+def run_h5ad(
+    adata_path: Path = typer.Option(..., "--adata", help="input .h5ad file"),
+    batch_key: str = typer.Option(..., "--batch-key", help="obs column with batch labels"),
+    output: Path = typer.Option(..., "--output", help="output .h5ad path"),
+    layer: str | None = typer.Option(None, "--layer", help="layer name with raw counts"),
+    sam_name: str = typer.Option("cohort", "--sam-name"),
+    id_type: str = typer.Option("Symbol", "--id-type"),
+    n_jobs: int = typer.Option(1, "--n-jobs", help="threads per batch"),
+    n_batch_parallel: int = typer.Option(1, "--n-batch-parallel"),
+    min_cells_per_batch: int = typer.Option(100, "--min-cells-per-batch"),
+    cna_storage: str = typer.Option("obsm", "--cna-storage", help="obsm | none"),
+    on_error: str = typer.Option("skip", "--on-error", help="skip | raise"),
+    seed: int = typer.Option(1234, "--seed"),
+) -> None:
+    """Run copykat per batch on an h5ad and write the merged h5ad."""
+    import anndata as ad  # type: ignore[import-untyped]
+
+    from pycopykat.io.h5ad import copykat_by_batch
+
+    a = ad.read_h5ad(adata_path)
+    cfg = CopykatConfig(
+        id_type=id_type,  # type: ignore[arg-type]
+        n_jobs=n_jobs,
+        seed=seed,
+        sam_name=sam_name,
+        output_dir=output.parent,
+    )
+    merged = copykat_by_batch(
+        a,
+        batch_key=batch_key,
+        layer=layer,
+        config=cfg,
+        min_cells_per_batch=min_cells_per_batch,
+        n_batch_parallel=n_batch_parallel,
+        on_error=on_error,
+        cna_storage=cna_storage,
+        copy=False,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    merged.write_h5ad(output)
+    typer.echo(f"wrote merged h5ad: {output}")
+
+
 if __name__ == "__main__":
     app()
