@@ -97,7 +97,7 @@ def _cluster_for_segmentation(
 
 def _run_pipeline_post_step3(
     *,
-    raw_counts_dense: NDArray[np.float64],
+    raw_counts_dense: NDArray[np.float64] | None,
     raw_counts_nz_sparse: sparse.spmatrix | None,
     gene_anno: pd.DataFrame,
     cell_cols: list[str],
@@ -108,15 +108,25 @@ def _run_pipeline_post_step3(
     """Run steps 4..12 given a post-stage-1-chrom-filter (genes, cells) state.
 
     The two entry points (``copykat`` DataFrame path and sparse helper) both
-    converge here after step 3. ``raw_counts_dense`` is the dense matrix
-    consumed by VST in step 4. ``raw_counts_nz_sparse`` — if provided — is the
-    companion sparse matrix used for the step 7 UP.DR gate and the stage-2
-    chromosome coverage filter; when ``None`` the dense path recomputes both
-    from ``raw_counts_dense`` (bit-identical to pre-S1).
+    converge here after step 3. Exactly one of ``raw_counts_dense`` /
+    ``raw_counts_nz_sparse`` is non-``None``:
+
+    - Dense path (public ``copykat``): ``raw_counts_dense`` carries counts; the
+      sparse companion is ``None`` and the step-7 UP.DR + stage-2 chrom gates
+      fall back to dense ops (bit-identical to pre-S1).
+    - Sparse path (``_copykat_from_sparse``, S2): ``raw_counts_nz_sparse`` is a
+      CSC counts matrix fed straight into ``vst_center``, which operates on
+      ``.data`` only and densifies at the centering boundary. ``raw_counts_dense``
+      is ``None`` on this path; the step-7 dense slicing branch is skipped.
     """
     # ── step 4: VST + center ─────────────────────────────────────────────────
     log.info("step 4/12: VST + per-cell centering")
-    X_norm = vst_center(raw_counts_dense)
+    # VST preserves zeros, so on the sparse path we feed the sparse matrix
+    # directly — only ~nnz entries are touched before centering densifies.
+    vst_input = (
+        raw_counts_nz_sparse if raw_counts_nz_sparse is not None else raw_counts_dense
+    )
+    X_norm = vst_center(vst_input)
 
     # ── step 5: Kalman smoothing ─────────────────────────────────────────────
     log.info("step 5/12: Kalman smoothing")
@@ -177,10 +187,12 @@ def _run_pipeline_post_step3(
     else:
         DR2 = (raw_counts_dense > 0).sum(axis=1) / raw_counts_dense.shape[1]
     keep_g = DR2 >= up_dr
-    # Apply gene keep to annotation + dense matrices. When sparse is active,
-    # we also slice the sparse companion so stage-2 chrom coverage stays sparse.
+    # Apply gene keep to annotation + matrices. On the sparse path, the dense
+    # companion is None and nothing downstream reads it (the VST output is the
+    # only post-step-4 consumer), so we only slice what we actually use.
     gene_anno = gene_anno.loc[keep_g].reset_index(drop=True)
-    raw_counts_dense = raw_counts_dense[keep_g]
+    if raw_counts_dense is not None:
+        raw_counts_dense = raw_counts_dense[keep_g]
     norm_relat = norm_relat[keep_g]
     if raw_counts_nz_sparse is not None:
         # Row-slice CSR (efficient) then convert to CSC for column-oriented ops.
@@ -198,7 +210,8 @@ def _run_pipeline_post_step3(
     keep2 = np.ones(len(cell_cols), dtype=bool)
     keep2[dropped2] = False
     cell_cols = [c for i, c in enumerate(cell_cols) if keep2[i]]
-    raw_counts_dense = raw_counts_dense[:, keep2]
+    if raw_counts_dense is not None:
+        raw_counts_dense = raw_counts_dense[:, keep2]
     norm_relat = norm_relat[:, keep2]
     preN = [c for c in preN if c in set(cell_cols)]
     if len(cell_cols) < 10:
@@ -382,9 +395,10 @@ def _copykat_from_sparse(
 ) -> CopykatResult:
     """Internal sparse-path entry for the copykat pipeline.
 
-    Keeps raw counts in ``scipy.sparse`` through steps 1–3 (and through the
-    step-7 stage-2 chrom-coverage filter). Step 4 (VST + centering) densifies,
-    matching the S1 scope. Public API (``copykat``) is unchanged.
+    Keeps raw counts in ``scipy.sparse`` through steps 1–4 (VST runs on
+    ``.data`` — zero-preserving) and the step-7 stage-2 chrom-coverage
+    filter. Centering inside :func:`vst_center` is the sparse→dense hand-off
+    boundary. Public API (``copykat``) is unchanged.
 
     Parameters
     ----------
@@ -450,11 +464,11 @@ def _copykat_from_sparse(
             f"too few cells after stage-1 chrom coverage filter: {len(cell_cols)}"
         )
 
-    # ── densify at step-4 boundary; keep sparse companion for step 7 ─────────
-    raw_counts_dense = X_csc.toarray().astype(np.float64, copy=False)
-
+    # S2: feed the sparse CSC matrix straight into step 4. ``vst_center``
+    # applies the zero-preserving transform on ``.data`` and densifies at the
+    # centering boundary, so no eager ``.toarray()`` is needed here.
     return _run_pipeline_post_step3(
-        raw_counts_dense=raw_counts_dense,
+        raw_counts_dense=None,
         raw_counts_nz_sparse=X_csc,
         gene_anno=gene_anno,
         cell_cols=cell_cols,
