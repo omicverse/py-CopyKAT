@@ -1,12 +1,16 @@
 """Cancer-level overview of the pycopykat vs R copykat benchmark.
 
-Reads ``benchmarks/full/py_vs_r_summary.csv`` (per-patient metrics) and
-produces three panels in a single PNG:
+Reads ``benchmarks/full/py_vs_r_summary.csv`` (per-patient py↔R metrics
+produced by run_py_sweep.py) and produces four panels in a single PNG:
 
-* Panel A — per-patient accuracy (py vs R vs truth) grouped by cancer.
-* Panel B — per-patient py↔R agreement (ARI, κ, FMI).
-* Panel C — per-patient runtime ratio (R minutes / py minutes) if
-  ``*_runinfo.txt`` files are present.
+* Panel A — per-patient py↔R agreement (ARI, κ, FMI).
+* Panel B — per-patient runtime (R vs pycopykat minutes) with speedup
+  factor annotated.
+* Panel C — distribution of py↔R ARI across all patients.
+* Panel D — per-cancer mean py↔R ARI and mean speedup.
+
+No truth labels are used; this script visualises pycopykat ↔ R copykat
+consistency only.
 
 Usage::
 
@@ -17,7 +21,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,45 +37,13 @@ CANCER_COLORS = {
 }
 
 
-def _read_runinfo(patient_dir: Path, sam_name: str) -> dict[str, float]:
-    out: dict[str, float] = {}
-    for label, fname in (
-        ("r_min", f"r_out/{sam_name}_copykat_runinfo.txt"),
-        ("py_min", f"py_out/{sam_name}_py_copykat_runinfo.txt"),
-    ):
-        p = patient_dir / fname
-        if not p.exists():
-            continue
-        for line in p.read_text().splitlines():
-            if line.startswith("elapsed_min="):
-                try:
-                    out[label] = float(line.split("=", 1)[1])
-                except ValueError:
-                    pass
-    return out
-
-
-def build_runtime_frame(summary: pd.DataFrame, base: Path) -> pd.DataFrame:
-    rows = []
-    for _, r in summary.iterrows():
-        pt_dir = base / r["cancer"] / r["sample"]
-        info = _read_runinfo(pt_dir, f"{r['sample']}_full")
-        rows.append({
-            "cancer": r["cancer"],
-            "sample": r["sample"],
-            "r_min":  info.get("r_min", float("nan")),
-            "py_min": info.get("py_min", float("nan")),
-        })
-    return pd.DataFrame(rows)
-
-
-def _barplot_grouped(ax, df, x_label, value_cols, palette, ylabel, title, y_max=None):
+def _barplot_grouped(ax, df, x_label, palette, ylabel, title, y_max=None):
     n = len(df)
-    w = 0.32
+    w = 0.9 / max(len(palette), 1)
     x = np.arange(n)
     for i, (col, colour) in enumerate(palette.items()):
-        ax.bar(x + (i - 0.5) * w, df[col].to_numpy(), width=w, color=colour, label=col)
-    # cancer-colored ticks
+        offset = (i - (len(palette) - 1) / 2) * w
+        ax.bar(x + offset, df[col].to_numpy(), width=w, color=colour, label=col)
     labels = [f"{r['cancer'][:3]}/{r['sample']}" for _, r in df.iterrows()]
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
@@ -96,61 +67,106 @@ def main() -> None:
     summary = pd.read_csv(args.summary)
     summary = summary.sort_values(["cancer", "sample"]).reset_index(drop=True)
 
-    base = args.summary.parent
-    rt = build_runtime_frame(summary, base)
-    summary = summary.merge(rt, on=["cancer", "sample"], how="left")
+    # Clip kappa to [0, 1] for plotting alongside ARI; negative kappa is a
+    # label-flip mechanism flag, which Panel C highlights separately.
+    summary["py_vs_r__kappa_clipped"] = summary["py_vs_r__kappa"].clip(lower=0.0)
 
-    fig, (axA, axB, axC) = plt.subplots(3, 1, figsize=(max(10, 0.9 * len(summary) + 2), 11))
+    fig, axes = plt.subplots(
+        2, 2, figsize=(max(11, 0.55 * len(summary) + 6), 10),
+    )
+    axA, axB, axC, axD = axes.flat
 
-    # Panel A: accuracy vs truth
+    # Panel A: py↔R agreement metrics
     _barplot_grouped(
         axA, summary, x_label="",
-        value_cols=("py_vs_truth__accuracy", "r_vs_truth__accuracy"),
         palette={
-            "py_vs_truth__accuracy": "#4C72B0",
-            "r_vs_truth__accuracy":  "#C0392B",
-        },
-        ylabel="accuracy vs 3CA cell_type",
-        title="A. Malignant/non-Malignant accuracy (py vs R, truth = 3CA labels)",
-        y_max=1.05,
-    )
-
-    # Panel B: py-vs-R agreement metrics
-    _barplot_grouped(
-        axB, summary, x_label="",
-        value_cols=("py_vs_r__ari", "py_vs_r__kappa", "py_vs_r__fmi"),
-        palette={
-            "py_vs_r__ari":   "#4C72B0",
-            "py_vs_r__kappa": "#55A868",
-            "py_vs_r__fmi":   "#E67E22",
+            "py_vs_r__ari":           "#4C72B0",
+            "py_vs_r__kappa_clipped": "#55A868",
+            "py_vs_r__fmi":           "#E67E22",
         },
         ylabel="metric",
-        title="B. pycopykat ↔ R copykat agreement (ARI / κ / FMI)",
+        title="A. pycopykat ↔ R copykat agreement (ARI / κ₊ / FMI)",
         y_max=1.05,
     )
 
-    # Panel C: runtime (bars for R and py; line for speedup)
-    if rt["r_min"].notna().any() and rt["py_min"].notna().any():
+    # Panel B: runtime (bars for R and py; annotated speedup)
+    r_col = "py_vs_r__r_min" if "py_vs_r__r_min" in summary.columns else None
+    py_col = "py_vs_r__py_min" if "py_vs_r__py_min" in summary.columns else None
+    sp_col = "py_vs_r__speedup" if "py_vs_r__speedup" in summary.columns else None
+    if r_col and py_col and summary[r_col].notna().any() and summary[py_col].notna().any():
         _barplot_grouped(
-            axC, summary, x_label="patient",
-            value_cols=("r_min", "py_min"),
+            axB, summary, x_label="patient",
             palette={
-                "r_min":  "#C0392B",
-                "py_min": "#4C72B0",
+                r_col:  "#C0392B",
+                py_col: "#4C72B0",
             },
             ylabel="runtime (minutes)",
-            title="C. Runtime (R vs pycopykat)",
+            title="B. Runtime (R vs pycopykat)",
         )
-        # annotate speedup factor
-        speedup = summary["r_min"] / summary["py_min"].replace({0: np.nan})
-        for i, s in enumerate(speedup):
-            if pd.notna(s):
-                axC.text(
-                    i, max(summary.loc[i, "r_min"], summary.loc[i, "py_min"]) + 0.3,
-                    f"{s:.1f}×", ha="center", fontsize=8, color="#333",
-                )
+        if sp_col:
+            for i, s in enumerate(summary[sp_col]):
+                if pd.notna(s):
+                    top = max(
+                        summary.loc[i, r_col] or 0.0,
+                        summary.loc[i, py_col] or 0.0,
+                    )
+                    axB.text(
+                        i, top + 0.3,
+                        f"{s:.1f}×", ha="center", fontsize=8, color="#333",
+                    )
     else:
-        axC.text(0.5, 0.5, "no runtime data", transform=axC.transAxes, ha="center")
+        axB.text(0.5, 0.5, "no runtime data", transform=axB.transAxes, ha="center")
+
+    # Panel C: ARI distribution
+    aris = summary["py_vs_r__ari"].dropna().to_numpy()
+    axC.hist(aris, bins=np.linspace(0, 1, 21), color="#4C72B0", edgecolor="white")
+    axC.axvline(np.median(aris), color="#C0392B", linestyle="--", linewidth=1,
+                label=f"median={np.median(aris):.3f}")
+    axC.axvline(np.mean(aris), color="#27AE60", linestyle=":", linewidth=1,
+                label=f"mean={np.mean(aris):.3f}")
+    axC.set_xlabel("py↔R ARI")
+    axC.set_ylabel("patients")
+    axC.set_title("C. py↔R ARI distribution (17 patients)", fontsize=11)
+    axC.legend(fontsize=8, frameon=False)
+    axC.grid(axis="y", alpha=0.25)
+
+    # Panel D: per-cancer mean ARI and speedup
+    agg_cols = {
+        "n_patients":         ("sample", "size"),
+        "py_vs_r_ari_mean":   ("py_vs_r__ari", "mean"),
+        "py_vs_r_kappa_mean": ("py_vs_r__kappa", "mean"),
+        "py_vs_r_fmi_mean":   ("py_vs_r__fmi", "mean"),
+    }
+    if r_col and py_col:
+        agg_cols["r_min_mean"] = (r_col, "mean")
+        agg_cols["py_min_mean"] = (py_col, "mean")
+    if sp_col:
+        agg_cols["speedup_mean"] = (sp_col, "mean")
+        agg_cols["speedup_median"] = (sp_col, "median")
+    agg = summary.groupby("cancer").agg(**agg_cols)
+    agg = agg.loc[sorted(agg.index)]
+
+    x = np.arange(len(agg))
+    w = 0.4
+    ax2 = axD.twinx()
+    bars_ari = axD.bar(
+        x - w / 2, agg["py_vs_r_ari_mean"].to_numpy(),
+        width=w, color="#4C72B0", label="mean ARI",
+    )
+    if "speedup_mean" in agg.columns:
+        bars_sp = ax2.bar(
+            x + w / 2, agg["speedup_mean"].to_numpy(),
+            width=w, color="#E67E22", label="mean speedup (×)",
+        )
+    axD.set_xticks(x)
+    axD.set_xticklabels(agg.index, rotation=30, ha="right", fontsize=9)
+    for tick, c in zip(axD.get_xticklabels(), agg.index):
+        tick.set_color(CANCER_COLORS.get(c, "#333333"))
+    axD.set_ylabel("mean py↔R ARI", color="#4C72B0")
+    axD.set_ylim(0, 1.05)
+    ax2.set_ylabel("mean speedup (R min / py min)", color="#E67E22")
+    axD.set_title("D. Per-cancer mean ARI and speedup", fontsize=11)
+    axD.grid(axis="y", alpha=0.25)
 
     fig.suptitle(
         f"pycopykat vs R copykat benchmark — {len(summary)} patients across "
@@ -161,17 +177,6 @@ def main() -> None:
     fig.savefig(args.out, dpi=150, bbox_inches="tight")
     print(f"[overview] wrote {args.out}")
 
-    # Also produce a per-cancer aggregate table
-    agg = summary.groupby("cancer").agg(
-        n_patients=("sample", "size"),
-        py_acc_mean=("py_vs_truth__accuracy", "mean"),
-        r_acc_mean=("r_vs_truth__accuracy", "mean"),
-        py_vs_r_ari_mean=("py_vs_r__ari", "mean"),
-        py_vs_r_kappa_mean=("py_vs_r__kappa", "mean"),
-        r_min_mean=("r_min", "mean"),
-        py_min_mean=("py_min", "mean"),
-    )
-    agg["speedup"] = agg["r_min_mean"] / agg["py_min_mean"]
     agg_path = args.out.with_suffix(".cancer_summary.csv")
     agg.to_csv(agg_path)
     print(f"[overview] wrote {agg_path}")

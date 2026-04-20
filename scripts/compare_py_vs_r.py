@@ -1,13 +1,19 @@
-"""Generate the 4-panel py-vs-R comparison figure (scDblFinder-style).
+"""Generate the 4-panel pycopykat-vs-R-copykat comparison figure and metrics.
 
 Panels:
-    1. R copykat class (aneuploid/diploid/not.defined) on the 3CA UMAP.
-    2. Agreement (both_aneuploid / R_only / py_only / both_diploid / undefined).
+    1. R copykat class (aneuploid/diploid/not.defined) on the sliced UMAP.
+    2. Agreement between py and R (both_aneuploid / R_only / py_only /
+       both_diploid / undefined).
     3. pycopykat class on the same UMAP.
     4. per-cell CNA intensity (mean |CNA|), py or R depending on --intensity.
 
-Also writes ``metrics.csv`` holding (a) py vs ground truth, (b) py vs R
-comparison, (c) run-time info if available.
+The UMAP coordinates come from ``cells.csv`` — they are layout only and
+carry no truth-label information. The 3CA ``cell_type`` column, if present,
+is not used: this script only measures pycopykat ↔ R copykat consistency
+under unsupervised auto-baseline.
+
+Writes a single-row ``metrics.csv`` with columns:
+    comparison=py_vs_r, ari, kappa, fmi, n_cells, py_min, r_min, speedup
 """
 from __future__ import annotations
 
@@ -17,15 +23,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import (
-    accuracy_score,
-    adjusted_rand_score,
-    f1_score,
-    precision_score,
-    recall_score,
-)
 
-from pycopykat.validation.metrics import compare_cna, compare_predictions
+from pycopykat.validation.metrics import compare_predictions
 
 
 CLASS_COLORS = {
@@ -75,11 +74,8 @@ def _build_agreement(merged: pd.DataFrame) -> pd.Series:
     p_pos = merged["py_class"] == "aneuploid"
     p_neg = merged["py_class"] == "diploid"
     agree[r_pos & p_pos] = "both_aneuploid"
-    agree[r_pos & ~p_pos] = "R_only"
-    agree[~r_pos & p_pos & r_neg] = "R_only"  # r_neg & p_pos would be py_only; see below
-    # Correct py_only: R diploid AND py aneuploid
-    agree[r_neg & p_pos] = "py_only"
     agree[r_pos & p_neg] = "R_only"
+    agree[r_neg & p_pos] = "py_only"
     agree[r_neg & p_neg] = "both_diploid"
     return agree
 
@@ -129,20 +125,16 @@ def _scatter_continuous(ax, x, y, values, title, cmap, point_size, cbar_label):
     cbar.ax.tick_params(labelsize=7)
 
 
-def _truth_metrics(pred_series: pd.Series, truth_series: pd.Series) -> dict:
-    defined = pred_series.isin(["aneuploid", "diploid"])
-    y_pred = (pred_series[defined] == "aneuploid").astype(int).to_numpy()
-    y_true = (truth_series[defined] == "Malignant").astype(int).to_numpy()
-    if len(y_pred) == 0:
-        return {k: float("nan") for k in
-                ("accuracy", "precision", "recall", "f1", "ari")}
-    return {
-        "accuracy":  float(accuracy_score(y_true, y_pred)),
-        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
-        "recall":    float(recall_score(y_true, y_pred, zero_division=0)),
-        "f1":        float(f1_score(y_true, y_pred, zero_division=0)),
-        "ari":       float(adjusted_rand_score(y_true, y_pred)),
-    }
+def _read_runinfo_minutes(runinfo_path: Path) -> float:
+    if not runinfo_path.exists():
+        return float("nan")
+    for line in runinfo_path.read_text().splitlines():
+        if line.startswith("elapsed_min="):
+            try:
+                return float(line.split("=", 1)[1])
+            except ValueError:
+                return float("nan")
+    return float("nan")
 
 
 def main() -> None:
@@ -150,7 +142,7 @@ def main() -> None:
     p.add_argument("--r-out", type=Path, required=True)
     p.add_argument("--py-out", type=Path, required=True)
     p.add_argument("--cells", type=Path, required=True,
-                   help="cells.csv with cell_name, sample, cell_type, umap1, umap2")
+                   help="cells.csv with cell_name, umap1, umap2 (layout only)")
     p.add_argument("--sam-name", required=True)
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--title-suffix", default="")
@@ -192,24 +184,33 @@ def main() -> None:
         merged["intensity"] = 0.0
     merged["intensity"] = merged["intensity"].fillna(merged["intensity"].median())
 
-    # --- metrics ---
-    py_vs_truth = _truth_metrics(merged["py_class"], merged["cell_type"].fillna("NA"))
-    r_vs_truth = _truth_metrics(merged["r_class"], merged["cell_type"].fillna("NA"))
+    # --- metrics (pycopykat vs R copykat only) ---
     py_vs_r = compare_predictions(
         r_pred.rename(columns={"r_class": "copykat.pred"}),
         py_pred.rename(columns={"py_class": "copykat.pred"}),
     )
 
-    metrics_rows = [
-        {"comparison": "py_vs_truth", **py_vs_truth, "n_cells": int(merged["py_class"].isin(["aneuploid", "diploid"]).sum())},
-        {"comparison": "r_vs_truth",  **r_vs_truth,  "n_cells": int(merged["r_class"].isin(["aneuploid", "diploid"]).sum())},
-        {"comparison": "py_vs_r",
-         "accuracy": float("nan"), "precision": float("nan"),
-         "recall": float("nan"), "f1": float("nan"),
-         "ari": py_vs_r["ari"], "kappa": py_vs_r["kappa"],
-         "fmi": py_vs_r["fmi"], "n_cells": py_vs_r["n_shared"]},
-    ]
-    pd.DataFrame(metrics_rows).to_csv(args.out_dir / "metrics.csv", index=False)
+    py_min = _read_runinfo_minutes(
+        args.py_out / f"{args.sam_name}_py_copykat_runinfo.txt"
+    )
+    r_min = _read_runinfo_minutes(
+        args.r_out / f"{args.sam_name}_copykat_runinfo.txt"
+    )
+    speedup = float("nan")
+    if np.isfinite(py_min) and np.isfinite(r_min) and py_min > 0:
+        speedup = r_min / py_min
+
+    metrics_row = {
+        "comparison": "py_vs_r",
+        "ari":        py_vs_r["ari"],
+        "kappa":      py_vs_r["kappa"],
+        "fmi":        py_vs_r["fmi"],
+        "n_cells":    py_vs_r["n_shared"],
+        "py_min":     py_min,
+        "r_min":      r_min,
+        "speedup":    speedup,
+    }
+    pd.DataFrame([metrics_row]).to_csv(args.out_dir / "metrics.csv", index=False)
 
     # --- figure ---
     fig, axes = plt.subplots(2, 2, figsize=(13, 10))
@@ -238,9 +239,8 @@ def main() -> None:
 
     suffix = f"  —  {args.title_suffix}" if args.title_suffix else ""
     fig.suptitle(
-        f"R vs pycopykat (ARI={py_vs_r['ari']:.3f}, κ={py_vs_r['kappa']:.3f}, "
-        f"FMI={py_vs_r['fmi']:.3f})"
-        f" | acc py={py_vs_truth['accuracy']:.3f} R={r_vs_truth['accuracy']:.3f}"
+        f"pycopykat vs R copykat (ARI={py_vs_r['ari']:.3f}, "
+        f"κ={py_vs_r['kappa']:.3f}, FMI={py_vs_r['fmi']:.3f})"
         f"{suffix}",
         fontsize=12,
     )

@@ -91,9 +91,8 @@ def process_patient(
     else:
         _log(f"[{cancer}/{pt}] py prediction exists — skip pycopykat step")
 
-    # Always re-run compare so metrics.csv stays in the 3-row 'comparison'
-    # format; run_all_benchmarks's benchmark_r_vs_truth.py step B overwrites
-    # this file with a single-row R-vs-truth schema on retries.
+    # Always re-run compare so metrics.csv stays in the single-row py↔R
+    # schema written by the refactored compare_py_vs_r.py.
     _log(f"[{cancer}/{pt}] building py-vs-R figure…")
     rc = _run(
         [
