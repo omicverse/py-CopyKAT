@@ -53,8 +53,17 @@ stopifnot(exists("cyclegenes"))
 writeLines(as.character(cyclegenes[[1]]),
            file.path(data_dir, "hg20_cycle_genes.txt"))
 
+# mm10 mouse gene annotation — only `full.anno.mm10` exists in sysdata.rda;
+# R copykat reuses DNA.hg20 bins for mm10 and skips the cycle-gene /
+# HLA filter in the mm10 code path. pycopykat mirrors that behaviour;
+# we only need the annotation parquet here.
+stopifnot(exists("full.anno.mm10"))
+arrow::write_parquet(as.data.frame(full.anno.mm10),
+                     file.path(data_dir, "mm10_gene_anno.parquet"))
+
 cat("Wrote (to ", data_dir, "):\n",
     "  hg20_gene_anno.parquet (", nrow(full.anno), " rows)\n",
     "  hg20_220kb_bins.parquet (", nrow(DNA.hg20), " rows)\n",
     "  hg20_cycle_genes.txt (", length(cyclegenes[[1]]), " genes)\n",
+    "  mm10_gene_anno.parquet (", nrow(full.anno.mm10), " rows)\n",
     sep = "")

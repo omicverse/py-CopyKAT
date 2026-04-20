@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 IdType = Literal["Symbol", "Ensembl"]
-Genome = Literal["hg20"]  # V1: mm10 deferred
+Genome = Literal["hg20", "mm10"]
 Distance = Literal["euclidean", "pearson", "spearman"]
 Backend = Literal["cpu"]  # V1 only
 BreakpointKS = Literal["mc", "analytic"]
@@ -51,8 +51,8 @@ class CopykatConfig:
             )
         if self.id_type not in ("Symbol", "Ensembl"):
             raise ValueError(f"id_type must be Symbol/Ensembl, got {self.id_type}")
-        if self.genome != "hg20":
-            raise ValueError(f"V1 only supports hg20; got {self.genome}")
+        if self.genome not in ("hg20", "mm10"):
+            raise ValueError(f"genome must be hg20/mm10, got {self.genome}")
         if self.breakpoint_ks not in ("mc", "analytic"):
             raise ValueError(
                 f"breakpoint_ks must be mc/analytic, got {self.breakpoint_ks}"

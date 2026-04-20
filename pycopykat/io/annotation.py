@@ -1,9 +1,11 @@
-"""hg20 gene annotation loader and annotate_genes helper.
+"""Gene annotation loaders (hg20 / mm10) and annotate_genes helpers.
 
 Wraps the parquet reference files shipped under ``data/`` (generated from
-copykat's ``sysdata.rda`` by ``scripts/convert_sysdata.R``). HLA- and
-cell-cycle genes are removed during :func:`annotate_genes` to match R copykat
-behaviour (copykat.R lines ~70-82).
+copykat's ``sysdata.rda`` by ``scripts/convert_sysdata.R``). For hg20, HLA-
+and cell-cycle genes are removed during :func:`annotate_genes` to match R
+copykat behaviour (copykat.R lines ~70-82). For mm10 the upstream R
+implementation skips those filters and reuses the hg20 220 kb bin table;
+pycopykat mirrors both choices.
 """
 from __future__ import annotations
 
@@ -16,6 +18,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     import numpy as np
+
+
+_GENOME_SYMBOL_COL = {
+    "hg20": "hgnc_symbol",
+    "mm10": "mgi_symbol",
+}
+_SUPPORTED_GENOMES = tuple(_GENOME_SYMBOL_COL)
 
 
 def _data_dir() -> Path:
@@ -34,15 +43,63 @@ def load_hg20_annotation() -> pd.DataFrame:
     return pd.read_parquet(_data_dir() / "hg20_gene_anno.parquet")
 
 
+def load_mm10_annotation() -> pd.DataFrame:
+    """Load the mm10 gene coordinate annotation as a DataFrame.
+
+    Mirrors R copykat's ``full.anno.mm10`` (137 030 rows). Uses
+    ``mgi_symbol`` as the gene name key (vs ``hgnc_symbol`` for hg20);
+    schema otherwise identical.
+    """
+    return pd.read_parquet(_data_dir() / "mm10_gene_anno.parquet")
+
+
+def load_genome_annotation(genome: str) -> pd.DataFrame:
+    """Load the gene-coordinate table for the requested genome."""
+    if genome == "hg20":
+        return load_hg20_annotation()
+    if genome == "mm10":
+        return load_mm10_annotation()
+    raise NotImplementedError(
+        f"Unsupported genome {genome!r}; expected one of {_SUPPORTED_GENOMES}"
+    )
+
+
 def load_hg20_cycle_genes() -> list[str]:
-    """Return the list of cell-cycle gene symbols to exclude."""
+    """Return the list of cell-cycle gene symbols to exclude (hg20 only)."""
     text = (_data_dir() / "hg20_cycle_genes.txt").read_text()
     return [s.strip() for s in text.splitlines() if s.strip()]
 
 
 def load_hg20_bins() -> pd.DataFrame:
-    """Load the hg20 220 kb genomic bin table."""
+    """Load the hg20 220 kb genomic bin table.
+
+    R copykat also uses this bin table in the mm10 code path (no separate
+    ``DNA.mm10`` in ``sysdata.rda``), so the loader name is genome-specific
+    but the data is shared across both pipelines.
+    """
     return pd.read_parquet(_data_dir() / "hg20_220kb_bins.parquet")
+
+
+def _symbol_column(genome: str, id_type: str) -> str:
+    """Pick the annotation key column for a (genome, id_type) combo."""
+    if id_type == "Ensembl":
+        return "ensembl_gene_id"
+    if id_type != "Symbol":
+        raise ValueError(f"id_type must be 'Symbol' or 'Ensembl', got {id_type!r}")
+    try:
+        return _GENOME_SYMBOL_COL[genome]
+    except KeyError as exc:
+        raise NotImplementedError(
+            f"Unsupported genome {genome!r}; expected one of {_SUPPORTED_GENOMES}"
+        ) from exc
+
+
+def _apply_hg20_filters(merged: pd.DataFrame) -> pd.DataFrame:
+    """Drop HLA- and cell-cycle genes (hg20-only, matches R copykat)."""
+    cyc = set(load_hg20_cycle_genes())
+    is_hla = merged["hgnc_symbol"].astype(str).str.startswith("HLA-")
+    is_cyc = merged["hgnc_symbol"].isin(cyc)
+    return merged.loc[~(is_hla | is_cyc)].copy()
 
 
 def annotate_gene_names(
@@ -51,7 +108,7 @@ def annotate_gene_names(
     id_type: str = "Symbol",
     genome: str = "hg20",
 ) -> tuple[pd.DataFrame, "np.ndarray"]:
-    """Lookup hg20 coordinates for a bare gene-name list.
+    """Lookup gene coordinates for a bare gene-name list.
 
     Sparse-path analog of :func:`annotate_genes` that does NOT need the
     expression matrix attached. Returns the matched annotation DataFrame in
@@ -67,25 +124,21 @@ def annotate_gene_names(
     id_type
         ``"Symbol"`` or ``"Ensembl"``.
     genome
-        Only ``"hg20"`` supported.
+        ``"hg20"`` (human, HGNC) or ``"mm10"`` (mouse, MGI).
 
     Returns
     -------
     (gene_anno, row_idx)
-        ``gene_anno`` is the annotation subset (HLA and cell-cycle dropped,
-        sorted by ``abspos``). ``row_idx`` is an integer array with one
-        entry per annotated row giving the corresponding row position in
+        ``gene_anno`` is the annotation subset (for hg20: HLA and cell-cycle
+        dropped; for mm10: no extra filter, mirroring R copykat). Sorted by
+        ``abspos``. ``row_idx`` is an integer array with one entry per
+        annotated row giving the corresponding row position in
         ``gene_names``.
     """
     import numpy as np
 
-    if genome != "hg20":
-        raise NotImplementedError(f"V1 only supports genome='hg20', got {genome!r}")
-    if id_type not in ("Symbol", "Ensembl"):
-        raise ValueError(f"id_type must be 'Symbol' or 'Ensembl', got {id_type!r}")
-
-    ann = load_hg20_annotation()
-    key = "hgnc_symbol" if id_type == "Symbol" else "ensembl_gene_id"
+    key = _symbol_column(genome, id_type)
+    ann = load_genome_annotation(genome)
     ann = ann.dropna(subset=[key]).drop_duplicates(subset=[key])
 
     names = np.asarray(gene_names)
@@ -96,10 +149,8 @@ def annotate_gene_names(
     )
     merged = ann.merge(expr_reset, on=key, how="inner")
 
-    cyc = set(load_hg20_cycle_genes())
-    is_hla = merged["hgnc_symbol"].astype(str).str.startswith("HLA-")
-    is_cyc = merged["hgnc_symbol"].isin(cyc)
-    merged = merged.loc[~(is_hla | is_cyc)].copy()
+    if genome == "hg20":
+        merged = _apply_hg20_filters(merged)
 
     merged = merged.sort_values("abspos", kind="mergesort").reset_index(drop=True)
     row_idx = merged["__row_idx"].to_numpy(dtype=np.int64)
@@ -113,40 +164,35 @@ def annotate_genes(
     id_type: str = "Symbol",
     genome: str = "hg20",
 ) -> pd.DataFrame:
-    """Attach hg20 coordinates to a genes × cells expression DataFrame.
+    """Attach gene coordinates to a genes × cells expression DataFrame.
 
     Parameters
     ----------
     expr
         Genes × cells DataFrame. Index holds gene identifiers.
     id_type
-        ``"Symbol"`` (HGNC) or ``"Ensembl"``.
+        ``"Symbol"`` (HGNC for hg20 / MGI for mm10) or ``"Ensembl"``.
     genome
-        Only ``"hg20"`` is supported in V1.
+        ``"hg20"`` (human) or ``"mm10"`` (mouse).
 
     Returns
     -------
     pd.DataFrame
-        Rows = genes that mapped to an annotation entry, minus HLA- and cell-cycle
-        genes. Columns = all 7 annotation columns followed by the original cell
-        columns. Sorted by ``abspos`` ascending.
+        Rows = genes that mapped to an annotation entry. For hg20, HLA-
+        and cell-cycle genes are additionally dropped. For mm10 no extra
+        filter is applied (matches R copykat's mm10 code path). Columns =
+        all 7 annotation columns followed by the original cell columns.
+        Sorted by ``abspos`` ascending.
     """
-    if genome != "hg20":
-        raise NotImplementedError(f"V1 only supports genome='hg20', got {genome!r}")
-    if id_type not in ("Symbol", "Ensembl"):
-        raise ValueError(f"id_type must be 'Symbol' or 'Ensembl', got {id_type!r}")
-
-    ann = load_hg20_annotation()
-    key = "hgnc_symbol" if id_type == "Symbol" else "ensembl_gene_id"
+    key = _symbol_column(genome, id_type)
+    ann = load_genome_annotation(genome)
     ann = ann.dropna(subset=[key]).drop_duplicates(subset=[key])
 
     expr_reset = expr.rename_axis(index=key).reset_index()
     merged = ann.merge(expr_reset, on=key, how="inner")
 
-    cyc = set(load_hg20_cycle_genes())
-    is_hla = merged["hgnc_symbol"].astype(str).str.startswith("HLA-")
-    is_cyc = merged["hgnc_symbol"].isin(cyc)
-    merged = merged.loc[~(is_hla | is_cyc)].copy()
+    if genome == "hg20":
+        merged = _apply_hg20_filters(merged)
 
     merged = merged.sort_values("abspos", kind="mergesort").reset_index(drop=True)
     return merged
