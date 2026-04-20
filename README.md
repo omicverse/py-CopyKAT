@@ -10,6 +10,19 @@ copykat consumes and produces the same per-cell aneuploid / diploid
 prediction and bin × cell CNA matrix under unsupervised auto-baseline
 selection.
 
+## Relation to omicverse
+
+pycopykat is developed following the
+[omicverse-to-developer](https://github.com/omicverse/omicverse-to-developer)
+`py-<Name>` conventions (pure-Python, no `rpy2` in production code,
+AnnData-native I/O, Numba only on hot kernels). It is a **candidate
+standalone mirror** — once vendored into the
+[`omicverse`](https://github.com/Starlitnightly/omicverse) organisation,
+this repository will serve as the maintenance mirror of
+`omicverse.external.copykat_py`, and users wanting CopyKAT without the
+full omicverse stack can continue to `pip install pycopykat`. Algorithmic
+work lives here first and will sync upstream.
+
 ## Benchmark headline
 
 17-patient 5-cancer sweep vs R copykat (unsupervised auto-baseline,
@@ -89,6 +102,26 @@ The 17-patient sweep in `benchmarks/full/` is driven by:
 The `cells.csv` `umap1` / `umap2` columns ship from the 3CA release and
 are used as figure layout only — no external cell-type label is used
 by any metric.
+
+## Parity status
+
+pycopykat's correctness target is *py ↔ R agreement on the same counts
+matrix under unsupervised auto-baseline*, not bit-exact reproduction of
+every intermediate. The 17-patient 5-cancer sweep above is the empirical
+gate; the per-stage status is:
+
+| Stage | Status vs R copykat | Notes |
+|---|---|---|
+| gene × cell preprocessing (filter + VST + log-Freeman–Tukey) | **bit-exact** on dense fixtures | sparse path produces identical dense output to ≤ 1e-12 |
+| 220 kb bin aggregation + DLM smoother (Kalman) | **bit-exact** up to float64 rounding (≤ 1e-10) | Fortran-order input to the Numba kernel; identical state-space parameters |
+| euclidean pdist (hot path) | ≤ 1e-8 absolute error vs `scipy.spatial.distance.pdist` | uses BLAS GEMM identity form for N ≥ 100; small-N routes to scipy |
+| GMM baseline selection | **approximate** | sklearn `GaussianMixture` vs R `mixtools::normalmixEM`; different EM init and tie-breaking |
+| hierarchical clustering | **approximate** | `scipy.cluster.hierarchy` ward.D2 vs R `hclust(method="ward.D")`; see Murtagh & Legendre (2014) |
+| dynamic tree cut | **approximate** | `dynamicTreeCut` V1 port; degenerate single-branch trees may disagree |
+| per-cell prediction | **empirical: median ARI 0.988 / κ 0.994** on 17-patient sweep | three patients show inverted aneuploid/diploid labels (high ARI, negative κ) driven by baseline-selection divergence |
+
+See [`benchmarks/full/FINDINGS.md`](benchmarks/full/FINDINGS.md) for the
+mechanism breakdown of the 5 / 17 patients where py and R diverge.
 
 ## Testing
 
