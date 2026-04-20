@@ -74,7 +74,7 @@ uv run pycopykat run-h5ad --input dataset.h5ad --batch-key sample \
 
 The 17-patient sweep in `benchmarks/full/` is driven by:
 
-1. `scripts/run_all_benchmarks.py` — slices the five 3CA counts
+1. `scripts/run_all_benchmarks.py` — slices the five per-cancer counts
    matrices into per-patient `counts.tsv` + `cells.csv` and runs R
    copykat.
 2. `scripts/run_py_sweep.py` — runs pycopykat on the same per-patient
