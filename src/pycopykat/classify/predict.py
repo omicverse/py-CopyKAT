@@ -34,7 +34,7 @@ def predict_ploidy(
     *,
     preN: list[str],
     distance: str = "euclidean",
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, NDArray[np.float64]]:
     """Assign each cell to ``"diploid"`` or ``"aneuploid"``.
 
     Parameters
@@ -50,8 +50,13 @@ def predict_ploidy(
 
     Returns
     -------
-    DataFrame with columns ``cell`` and ``copykat.pred`` in the original
-    cell order.
+    (pred, Z)
+        ``pred`` is a DataFrame with columns ``cell`` and ``copykat.pred``
+        in the original cell order. ``Z`` is the scipy Ward linkage matrix
+        computed on ``cna.T`` with the requested ``distance``.
+
+        The returned linkage is valid for reuse downstream only when both
+        the input matrix AND the distance function are unchanged.
     """
     if len(cells) != cna.shape[1]:
         raise ValueError(f"cells length {len(cells)} != cna cols {cna.shape[1]}")
@@ -79,4 +84,4 @@ def predict_ploidy(
         pred = [
             "diploid" if int(l) == diploid_label else "aneuploid" for l in labels
         ]
-    return pd.DataFrame({"cell": cells, "copykat.pred": pred})
+    return pd.DataFrame({"cell": cells, "copykat.pred": pred}), Z

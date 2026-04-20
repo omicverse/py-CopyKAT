@@ -271,7 +271,7 @@ def copykat(
     pred_preN = list(preN_set) if preN_set else [
         c for c, m in zip(cell_cols, diploid_mask) if m
     ]
-    pred = predict_ploidy(
+    pred, Z_final = predict_ploidy(
         cna_adj, cell_cols, preN=pred_preN, distance=cfg.distance
     )
 
@@ -307,7 +307,8 @@ def copykat(
         index=pd.MultiIndex.from_frame(bins_retained[["chrom", "start", "end"]]),
         columns=cell_cols,
     )
-    Z_final = linkage(_DIST_FN[cfg.distance](cna_adj.T), method="ward")
+    # A4: reuse Z already built inside predict_ploidy on the same cna_adj.T
+    # with the same distance function; no need to recompute.
 
     return CopykatResult(
         cna_mat=cna_df,

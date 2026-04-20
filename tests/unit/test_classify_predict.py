@@ -14,8 +14,9 @@ def test_labels_known_normal_majority_cluster_as_diploid():
     cells = [f"d{i}" for i in range(10)] + [f"a{i}" for i in range(10)]
     preN = [f"d{i}" for i in range(10)]
 
-    pred = predict_ploidy(cna, cells, preN=preN, distance="euclidean")
+    pred, Z = predict_ploidy(cna, cells, preN=preN, distance="euclidean")
     assert list(pred.columns) == ["cell", "copykat.pred"]
+    assert Z.shape == (cna.shape[1] - 1, 4)
     dip = set(pred.loc[pred["copykat.pred"] == "diploid", "cell"])
     assert len(dip & set(preN)) >= 8
 
@@ -25,7 +26,7 @@ def test_preserves_cell_order():
     cna = rng.normal(0, 0.1, size=(30, 12))
     cells = [f"c{i}" for i in range(12)]
     preN = cells[:3]
-    pred = predict_ploidy(cna, cells, preN=preN, distance="euclidean")
+    pred, _Z = predict_ploidy(cna, cells, preN=preN, distance="euclidean")
     assert list(pred["cell"]) == cells
 
 
@@ -38,6 +39,6 @@ def test_supports_correlation_distances():
     cells = [f"d{i}" for i in range(8)] + [f"a{i}" for i in range(8)]
     preN = cells[:8]
     for dist in ("euclidean", "pearson", "spearman"):
-        pred = predict_ploidy(cna, cells, preN=preN, distance=dist)
+        pred, _Z = predict_ploidy(cna, cells, preN=preN, distance=dist)
         labels = pred["copykat.pred"].unique().tolist()
         assert set(labels).issubset({"diploid", "aneuploid"})
