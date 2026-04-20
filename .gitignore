@@ -27,6 +27,7 @@ tmp/
 # Raw / sliced datasets (large, regenerable from upstream papers)
 # ---------------------------------------------------------------------------
 /tests/data/
+/tests/r_out/
 /benchmarks/pilot/
 
 # ---------------------------------------------------------------------------
