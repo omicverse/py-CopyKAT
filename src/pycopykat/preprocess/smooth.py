@@ -33,6 +33,8 @@ def smooth_cells(
     np.ndarray (float64)
         Same shape as ``X``, each column mean-centered.
     """
-    S = kalman_smooth_matrix(np.asarray(X, dtype=np.float64), dV=dV, dW=dW)
+    # A8: feed Fortran-order directly so the parallel kernel can slice
+    # contiguous columns without an internal .copy().
+    S = kalman_smooth_matrix(np.asfortranarray(X, dtype=np.float64), dV=dV, dW=dW)
     S -= S.mean(axis=0, keepdims=True)
     return S

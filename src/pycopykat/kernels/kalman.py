@@ -57,14 +57,21 @@ def kalman_smooth(y: np.ndarray, dV: float = 0.16, dW: float = 0.001) -> np.ndar
 
 @njit(cache=True, parallel=True, fastmath=True)
 def _smooth_matrix_kernel(Y: np.ndarray, dV: float, dW: float) -> np.ndarray:
+    # A8: Y is expected in Fortran order so Y[:, j] is a contiguous view.
+    # Avoids the per-column .copy() and the 2×memory temporary.
     g, c = Y.shape
     out = np.empty_like(Y)
     for j in prange(c):
-        s_full = _rts_smooth_1d(Y[:, j].copy(), dV, dW)
+        s_full = _rts_smooth_1d(Y[:, j], dV, dW)
         for i in range(g):
             out[i, j] = s_full[i + 1]
     return out
 
 def kalman_smooth_matrix(Y: np.ndarray, dV: float = 0.16, dW: float = 0.001) -> np.ndarray:
-    """Apply smoother column-wise (each cell independent). Parallel over cells."""
-    return _smooth_matrix_kernel(np.ascontiguousarray(Y, dtype=np.float64), dV, dW)
+    """Apply smoother column-wise (each cell independent). Parallel over cells.
+
+    The matrix kernel expects Fortran-order input so columns are contiguous
+    in memory, which lets the per-column RTS call read straight from ``Y[:, j]``
+    without a copy.
+    """
+    return _smooth_matrix_kernel(np.asfortranarray(Y, dtype=np.float64), dV, dW)
