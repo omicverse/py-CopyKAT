@@ -8,10 +8,45 @@ import numpy as np
 from numba import njit, prange
 from scipy.spatial.distance import pdist
 
+# Below this, scipy's single-threaded C kernel already beats BLAS setup cost
+# and avoids catastrophic cancellation for near-identical rows.
+_BLAS_EUCLIDEAN_MIN_N = 100
+
 
 def pdist_euclidean(X: np.ndarray) -> np.ndarray:
-    """Thin wrapper over scipy (already C-optimized)."""
-    return pdist(np.ascontiguousarray(X, dtype=np.float64), metric="euclidean")
+    """BLAS-based condensed euclidean distance vector.
+
+    Uses ``||a - b||^2 = ||a||^2 + ||b||^2 - 2*a*b^T`` via a single GEMM.
+    Parallel when NumPy is linked against a multi-threaded BLAS
+    (OpenBLAS/MKL). Output matches ``scipy.spatial.distance.pdist(X,
+    "euclidean")`` to numerical precision (atol ~1e-8); the
+    symmetric-identity formula can produce tiny negative squared
+    distances from catastrophic cancellation for near-identical rows,
+    which we clamp to zero before the sqrt.
+
+    For ``n < 100`` rows we delegate to scipy directly: its C kernel
+    already beats the BLAS GEMM setup at that size and avoids the
+    cancellation issue entirely.
+
+    Returns the upper-triangle (k=1) in row-major order — identical
+    ordering to ``scipy.spatial.distance.pdist``.
+    """
+    X = np.ascontiguousarray(X, dtype=np.float64)
+    n = X.shape[0]
+    if n < _BLAS_EUCLIDEAN_MIN_N:
+        return pdist(X, metric="euclidean")
+
+    # Squared norms per row — use einsum to fuse square + sum.
+    sq = np.einsum("ij,ij->i", X, X)
+    # Level-3 BLAS GEMM — this is the parallel hot step on OpenBLAS/MKL.
+    G = X @ X.T
+    # Broadcast outer sum minus 2·Gram → squared distances.
+    D2 = sq[:, None] + sq[None, :] - 2.0 * G
+    # Clamp negatives (catastrophic cancellation for near-identical rows).
+    np.maximum(D2, 0.0, out=D2)
+    # Extract upper triangle (k=1) in row-major order — matches scipy.pdist.
+    iu, ju = np.triu_indices(n, k=1)
+    return np.sqrt(D2[iu, ju])
 
 
 @njit(cache=True, parallel=True, fastmath=True)
