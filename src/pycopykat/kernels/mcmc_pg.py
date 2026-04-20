@@ -23,3 +23,16 @@ def pg_posterior_mean(
 ) -> float:
     """Monte-Carlo estimate of posterior mean lambda."""
     return float(pg_posterior_samples(y, alpha, beta, mc, seed).mean())
+
+
+def pg_posterior_mean_analytic(
+    y: np.ndarray, alpha: float, beta: float
+) -> float:
+    """Analytical posterior mean of ``Gamma(alpha + sum(y), scale=1/(beta + n))``.
+
+    Gamma(shape=α+Σy, scale=1/(β+n)) has expectation ``shape · scale``,
+    which equals ``(α + Σy) / (β + n)``. Substituting this closed form for
+    a ``mc``-sample Monte-Carlo mean removes ~``1/√mc`` noise and avoids an
+    RNG call, without changing the expectation.
+    """
+    return float((alpha + float(y.sum())) / (beta + y.size))

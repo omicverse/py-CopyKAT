@@ -17,7 +17,7 @@ import numpy as np
 from joblib import Parallel, delayed
 from numpy.typing import NDArray
 
-from pycopykat.kernels.mcmc_pg import pg_posterior_samples
+from pycopykat.kernels.mcmc_pg import pg_posterior_mean_analytic
 from pycopykat.segment.breakpoint import find_breakpoints
 
 
@@ -61,10 +61,9 @@ def _segment_one_cell(
         e = BR[i + 1]
         seg = col[s : e + 1]
         a = max(float(seg.mean()), 1e-3)
-        samp = pg_posterior_samples(
-            seg, alpha=a, beta=1.0, mc=mc, seed=seed + i * 7919
-        )
-        x[s : e + 1] = samp.mean()
+        # Analytical posterior mean of Gamma(a + Σseg, scale=1/(1 + n_seg)).
+        # Replaces a 1000-sample MC mean with its closed-form expectation.
+        x[s : e + 1] = pg_posterior_mean_analytic(seg, alpha=a, beta=1.0)
     return np.log(np.maximum(x, 1e-12))
 
 
