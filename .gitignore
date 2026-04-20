@@ -22,3 +22,34 @@ build/
 !data/**/*.rda
 scratch/
 tmp/
+
+# ---------------------------------------------------------------------------
+# Raw / sliced datasets (large, regenerable from upstream papers)
+# ---------------------------------------------------------------------------
+/tests/data/
+/benchmarks/pilot/
+
+# ---------------------------------------------------------------------------
+# Per-patient sweep artifacts produced by scripts/run_py_sweep.py and
+# scripts/run_all_benchmarks.py. Only top-level aggregates under
+# benchmarks/full/ and benchmarks/scaling/ are kept.
+# ---------------------------------------------------------------------------
+/benchmarks/full/*/
+/benchmarks/scaling/*/
+
+# ---------------------------------------------------------------------------
+# Log rotations from sweep runners. run_all.log.2 is intentionally kept as
+# evidence; everything else is transient.
+# ---------------------------------------------------------------------------
+/benchmarks/**/run_all.log
+/benchmarks/**/run_all.log.[0-9]
+/benchmarks/**/sweep.log
+/benchmarks/**/sweep.log.[0-9]
+!/benchmarks/full/run_all.log.2
+
+# Ad-hoc dev helpers that occasionally appear under benchmarks/
+/benchmarks/**/_compute_report.py
+/benchmarks/**/codex_review.*
+/benchmarks/codex_runs/
+/benchmarks/full/runinfo_pre_*/
+/benchmarks/full/py_logs/
