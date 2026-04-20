@@ -8,6 +8,7 @@ IdType = Literal["Symbol", "Ensembl"]
 Genome = Literal["hg20"]  # V1: mm10 deferred
 Distance = Literal["euclidean", "pearson", "spearman"]
 Backend = Literal["cpu"]  # V1 only
+BreakpointKS = Literal["mc", "analytic"]
 
 
 @dataclass(slots=True)
@@ -31,6 +32,17 @@ class CopykatConfig:
     n_jobs: int = 1
     seed: int = 1234
     backend: Backend = "cpu"
+    breakpoint_ks: BreakpointKS = "mc"
+    """Breakpoint KS mode. ``"mc"`` (default) matches R copykat: draws
+    ``mc=1000`` Poisson-Gamma posterior samples per window pair and calls
+    :func:`scipy.stats.ks_2samp`. ``"analytic"`` (experimental) computes the
+    KS statistic in closed form via :func:`scipy.stats.gamma.cdf` on a dense
+    grid — no MC noise, ~5–20x faster, but the effective threshold differs:
+    ``ks_cut`` is tuned against the MC noise floor (~0.04 at ``mc=1000``),
+    so flipping to ``"analytic"`` may systematically lower KS values on
+    noisy boundary pairs and is likely to require retuning ``ks_cut``.
+    Default remains ``"mc"`` to preserve bit-identical behaviour vs. the
+    R reference."""
 
     def __post_init__(self) -> None:
         if self.distance not in ("euclidean", "pearson", "spearman"):
@@ -41,4 +53,8 @@ class CopykatConfig:
             raise ValueError(f"id_type must be Symbol/Ensembl, got {self.id_type}")
         if self.genome != "hg20":
             raise ValueError(f"V1 only supports hg20; got {self.genome}")
+        if self.breakpoint_ks not in ("mc", "analytic"):
+            raise ValueError(
+                f"breakpoint_ks must be mc/analytic, got {self.breakpoint_ks}"
+            )
         self.output_dir = Path(self.output_dir)

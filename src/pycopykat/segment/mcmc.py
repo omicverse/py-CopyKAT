@@ -18,7 +18,10 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from pycopykat.segment.breakpoint import find_breakpoints
+from pycopykat.segment.breakpoint import (
+    find_breakpoints,
+    find_breakpoints_analytic,
+)
 
 
 def _consensus_per_cluster(
@@ -39,13 +42,26 @@ def _union_breaks(
     ks_cut: float,
     seed: int,
     mc: int,
+    breakpoint_ks: str = "mc",
 ) -> list[int]:
+    """Union of per-cluster breakpoint calls.
+
+    ``breakpoint_ks="mc"`` (default) runs the MC Poisson-Gamma KS path,
+    bit-identical to the original behaviour. ``breakpoint_ks="analytic"``
+    dispatches to :func:`find_breakpoints_analytic`, which uses a closed-form
+    Gamma-KS statistic and is deterministic (ignores ``seed`` and ``mc``).
+    """
     all_breaks: set[int] = {0, consensus.shape[0] - 1}
     for c in range(consensus.shape[1]):
-        br = find_breakpoints(
-            consensus[:, c], bins=bins, ks_cut=ks_cut,
-            seed=seed + 1000 * c, mc=mc,
-        )
+        if breakpoint_ks == "analytic":
+            br = find_breakpoints_analytic(
+                consensus[:, c], bins=bins, ks_cut=ks_cut,
+            )
+        else:
+            br = find_breakpoints(
+                consensus[:, c], bins=bins, ks_cut=ks_cut,
+                seed=seed + 1000 * c, mc=mc,
+            )
         all_breaks.update(br)
     return sorted(all_breaks)
 
@@ -59,6 +75,7 @@ def segment_cells(
     seed: int,
     mc: int = 1000,
     n_jobs: int = 1,
+    breakpoint_ks: str = "mc",
 ) -> tuple[NDArray[np.float64], list[int]]:
     """Per-cell analytic Poisson-Gamma segmentation with cluster-union breaks.
 
@@ -81,6 +98,11 @@ def segment_cells(
         Unused; kept for backwards-compatible signature. The vectorized
         segmentation runs in a single NumPy call, so per-cell parallelism
         is not needed here.
+    breakpoint_ks
+        ``"mc"`` (default) uses the Monte-Carlo Poisson-Gamma KS test
+        (``mc`` samples per window). ``"analytic"`` uses the closed-form
+        Gamma-KS statistic from :func:`pycopykat.segment.breakpoint.find_breakpoints_analytic`
+        (experimental; ``ks_cut`` may need retuning).
 
     Returns
     -------
@@ -90,7 +112,14 @@ def segment_cells(
     """
     del n_jobs  # kept for API compat; vectorized path has no per-cell loop
     consensus = _consensus_per_cluster(fttmat, clu)
-    BR = _union_breaks(consensus, bins=bins, ks_cut=ks_cut, seed=seed, mc=mc)
+    BR = _union_breaks(
+        consensus,
+        bins=bins,
+        ks_cut=ks_cut,
+        seed=seed,
+        mc=mc,
+        breakpoint_ks=breakpoint_ks,
+    )
 
     raw = np.exp(np.asarray(fttmat, dtype=np.float64))
     n_genes = raw.shape[0]

@@ -15,6 +15,14 @@ def test_default_config():
     assert c.cell_line is False
     assert c.seed == 1234
     assert c.n_jobs == 1
+    assert c.breakpoint_ks == "mc"
+
+
+def test_config_rejects_invalid_breakpoint_ks():
+    import pytest
+
+    with pytest.raises(ValueError):
+        CopykatConfig(breakpoint_ks="bogus")  # type: ignore[arg-type]
 
 
 def test_config_accepts_overrides():

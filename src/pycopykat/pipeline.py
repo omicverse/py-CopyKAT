@@ -242,6 +242,7 @@ def _run_pipeline_post_step3(
         seed=cfg.seed,
         mc=1000,
         n_jobs=cfg.n_jobs,
+        breakpoint_ks=cfg.breakpoint_ks,
     )
 
     # ── step 9: aggregate to 220 kb bins ─────────────────────────────────────
