@@ -1,6 +1,6 @@
 # pycopykat
 
-A **pure-Python re-implementation of [CopyKAT](https://github.com/navinlabcode/copykat)** (Gao et al., *Nat Biotechnol* 2021) for single-cell aneuploid / diploid classification and bin-level CNA calling from scRNA-seq counts.
+A pure-Python re-implementation of [CopyKAT](https://github.com/navinlabcode/copykat) (Gao et al., *Nat Biotechnol* 2021) — aneuploid / diploid classification and bin-level CNA calling from scRNA-seq counts. Drop-in for the scanpy / AnnData ecosystem.
 
 - AnnData-native — drop-in for the scanpy ecosystem (`copykat_by_batch` iterates over a `.h5ad` batch key)
 - **No `rpy2`**, no R install — the full CopyKAT pipeline (filter → VST → annotate → Kalman smoothing → KS breakpoints → MCMC segmentation → GMM baseline → Ward clustering → per-cell prediction) is implemented directly in NumPy / SciPy / Numba
