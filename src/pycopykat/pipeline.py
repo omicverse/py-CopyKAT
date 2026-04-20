@@ -153,6 +153,12 @@ def copykat(
 
     # ── step 6: baseline estimation ───────────────────────────────────────────
     log.info("step 6/12: baseline estimation")
+    # `auto_labels` holds the Ward cluster labels produced by `baseline_norm_cl`
+    # on the **pre-stage-2** cells, to be reused for segmentation clustering in
+    # step 8 (A3). Only populated on the happy auto-baseline path — on any
+    # other branch (cell-line, norm_cell_names, GMM fallback) we fall back to
+    # a fresh `_cluster_for_segmentation` call.
+    auto_labels: NDArray[np.int_] | None = None
     if cfg.cell_line:
         # V1: simplified cell-line mode — global median across all cells.
         # Proper per-cluster synthetic-normal (baseline_synthetic) requires
@@ -179,6 +185,12 @@ def copykat(
             )
             if br.warning:
                 warnings.append(br.warning)
+        else:
+            # Only the happy `baseline_norm_cl` path gives labels that match the
+            # segmentation stage's needs; GMM labels are produced on a different
+            # (post-fallback) tree and the synthetic/cell-line branches have no
+            # labels at all.
+            auto_labels = np.asarray(br.labels, dtype=np.int_)
         basel = br.basel
         preN = br.preN
     norm_relat = X_smooth - basel[:, None]
@@ -207,7 +219,19 @@ def copykat(
 
     # ── step 8: per-cell segmentation ────────────────────────────────────────
     log.info("step 8/12: per-cell Poisson-Gamma segmentation")
-    clu = _cluster_for_segmentation(norm_relat, cfg.distance, len(cell_cols))
+    # A3: reuse the Ward labels from baseline_norm_cl when available. Those
+    # labels were computed BEFORE stage-2 filtering, so subset by keep2 and
+    # re-label to consecutive ids. Fall back to a fresh ward cut if fewer
+    # than two distinct labels survive, or if auto_labels is not available.
+    clu: NDArray[np.int_] | None = None
+    if auto_labels is not None:
+        sub = auto_labels[keep2]
+        uniq = np.unique(sub)
+        if uniq.size >= 2:
+            _, inv = np.unique(sub, return_inverse=True)
+            clu = (inv + 1).astype(np.int_)
+    if clu is None:
+        clu = _cluster_for_segmentation(norm_relat, cfg.distance, len(cell_cols))
     logCNA, _BR = segment_cells(
         norm_relat,
         clu,
