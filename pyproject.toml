@@ -5,11 +5,33 @@ build-backend = "hatchling.build"
 [project]
 name = "pycopykat"
 version = "0.1.0.dev0"
-description = "Python rewrite of CopyKAT (Gao et al. 2021) with Numba acceleration"
+description = "Pure-Python CopyKAT — scRNA-seq aneuploid/diploid CNA calling, Numba-accelerated"
 readme = "README.md"
 license = "GPL-2.0-or-later"
 requires-python = ">=3.10,<3.13"
-authors = [{name = "Jason"}]
+authors = [{ name = "Jason", email = "lucyagune3@gmail.com" }]
+keywords = [
+  "single-cell",
+  "scRNA-seq",
+  "copy-number",
+  "CNA",
+  "aneuploidy",
+  "tumor",
+  "copykat",
+  "bioinformatics",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 dependencies = [
   "numpy>=1.26,<3",
   "scipy>=1.11",
@@ -22,6 +44,12 @@ dependencies = [
   "typer>=0.9",
   "pyarrow>=14",
 ]
+
+[project.urls]
+Homepage = "https://github.com/omicverse/py-CopyKAT"
+Repository = "https://github.com/omicverse/py-CopyKAT"
+Issues = "https://github.com/omicverse/py-CopyKAT/issues"
+"Upstream R reference" = "https://github.com/navinlabcode/copykat"
 
 [project.optional-dependencies]
 dev = [
