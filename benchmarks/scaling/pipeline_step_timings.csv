@@ -1,0 +1,16 @@
+step,label,seconds,pct_of_total
+1,filter cells & genes (LOW.DR),0.5015,1.50
+2,annotate gene coordinates,1.2118,3.62
+3,stage-1 chrom coverage filter,0.3673,1.10
+4,VST + per-cell centering,0.4846,1.45
+5,Kalman smoothing,0.0588,0.18
+6,baseline estimation,11.1019,33.14
+7,UP.DR + stage-2 chrom coverage,0.6627,1.98
+8,segmentation,1.2011,3.59
+9,aggregate to 220kb bins,0.7196,2.15
+10,baseline-anchored adjustment,0.7879,2.35
+11,predict ploidy,16.1343,48.16
+12,subclone detection,0.0683,0.20
+-1,SUM_OF_STEPS,33.2999,99.39
+-2,MEDIAN_WALL_CLOCK,33.5031,100.00
+-3,RESIDUAL (harness + fn-call overhead),0.2033,0.61

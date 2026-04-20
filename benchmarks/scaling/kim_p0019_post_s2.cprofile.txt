@@ -1,0 +1,83 @@
+=== cProfile: top 30 by cumulative time ===
+Mon Apr 20 13:28:22 2026    benchmarks/scaling/kim_p0019_post_s2.prof
+
+         862992 function calls (862622 primitive calls) in 36.129 seconds
+
+   Ordered by: cumulative time
+   List reduced from 1429 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.226    0.226   36.130   36.130 pipeline.py:380(copykat)
+        1    0.579    0.579   33.919   33.919 pipeline.py:130(_run_pipeline_post_step3)
+        6    0.000    0.000   26.206    4.368 _lazy.py:57(lazy_apply)
+        6    0.000    0.000   26.205    4.367 _lazy.py:333(wrapper)
+        3    0.019    0.006   26.173    8.724 distances.py:12(pdist_euclidean)
+        3    0.000    0.000   25.922    8.641 distance.py:1816(pdist)
+        3    0.000    0.000   25.921    8.640 distance.py:2110(_np_pdist)
+        3   25.921    8.640   25.921    8.640 {built-in method scipy.spatial._distance_pybind.pdist_euclidean}
+        1    0.000    0.000   16.261   16.261 predict.py:31(predict_ploidy)
+        1    0.064    0.064   11.159   11.159 auto.py:37(baseline_norm_cl)
+        1    0.000    0.000   10.160   10.160 _shared.py:52(ward_cluster_with_min_size)
+        1    0.328    0.328    3.476    3.476 mcmc.py:69(segment_cells)
+        1    0.000    0.000    2.880    2.880 mcmc.py:38(_union_breaks)
+        6    0.021    0.004    2.880    0.480 breakpoint.py:18(find_breakpoints)
+     1170    0.094    0.000    2.595    0.002 _axis_nan_policy.py:426(axis_nan_policy_wrapper)
+        1    0.058    0.058    1.073    1.073 annotation.py:110(annotate_genes)
+      441    0.002    0.000    0.978    0.002 _function_base_impl.py:3902(median)
+      441    0.019    0.000    0.977    0.002 _function_base_impl.py:3815(_ureduce)
+      441    0.008    0.000    0.946    0.002 _function_base_impl.py:3991(_median)
+       17    0.000    0.000    0.867    0.051 managers.py:642(reindex_indexer)
+       33    0.000    0.000    0.864    0.026 blocks.py:1353(take_nd)
+       48    0.000    0.000    0.864    0.018 take.py:59(take_nd)
+       48    0.863    0.018    0.864    0.018 take.py:120(_take_nd_ndarray)
+        1    0.414    0.414    0.777    0.777 adjust_pipeline.py:23(baseline_adjust)
+        1    0.549    0.549    0.770    0.770 bins.py:21(aggregate_to_bins)
+      441    0.003    0.000    0.725    0.002 fromnumeric.py:732(partition)
+       12    0.000    0.000    0.637    0.053 managers.py:888(take)
+     1170    0.005    0.000    0.613    0.001 _util.py:934(wrapper)
+     4051    0.611    0.000    0.611    0.000 {method 'copy' of 'numpy.ndarray' objects}
+     1170    0.078    0.000    0.608    0.001 _stats_py.py:7775(ks_2samp)
+
+
+
+=== cProfile: top 30 by total time ===
+Mon Apr 20 13:28:22 2026    benchmarks/scaling/kim_p0019_post_s2.prof
+
+         862992 function calls (862622 primitive calls) in 36.129 seconds
+
+   Ordered by: internal time
+   List reduced from 1429 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        3   25.921    8.640   25.921    8.640 {built-in method scipy.spatial._distance_pybind.pdist_euclidean}
+       48    0.863    0.018    0.864    0.018 take.py:120(_take_nd_ndarray)
+     4051    0.611    0.000    0.611    0.000 {method 'copy' of 'numpy.ndarray' objects}
+      441    0.596    0.001    0.596    0.001 {method 'partition' of 'numpy.ndarray' objects}
+        1    0.579    0.579   33.919   33.919 pipeline.py:130(_run_pipeline_post_step3)
+        1    0.549    0.549    0.770    0.770 bins.py:21(aggregate_to_bins)
+        1    0.480    0.480    0.487    0.487 normalize.py:18(vst_center)
+        1    0.414    0.414    0.777    0.777 adjust_pipeline.py:23(baseline_adjust)
+        1    0.328    0.328    3.476    3.476 mcmc.py:69(segment_cells)
+        3    0.283    0.094    0.283    0.094 hierarchy.py:1052(cy_linkage)
+        1    0.237    0.237    0.237    0.237 adjust.py:13(_adjust_kernel)
+        2    0.236    0.118    0.456    0.228 filter.py:69(filter_cells_by_chrom_coverage)
+        7    0.232    0.033    0.232    0.033 {built-in method numpy.ascontiguousarray}
+    17230    0.228    0.000    0.228    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+        1    0.226    0.226   36.130   36.130 pipeline.py:380(copykat)
+     1170    0.216    0.000    0.216    0.000 _stats_py.py:7615(_compute_prob_outside_square)
+        3    0.215    0.072    0.215    0.072 {method 'reduceat' of 'numpy.ufunc' objects}
+      458    0.178    0.000    0.178    0.000 {method 'take' of 'numpy.ndarray' objects}
+     1229    0.116    0.000    0.120    0.000 numeric.py:323(full)
+     2340    0.098    0.000    0.182    0.000 mcmc_pg.py:11(pg_posterior_samples)
+     1170    0.095    0.000    0.438    0.000 _axis_nan_policy.py:62(_broadcast_shapes)
+     1170    0.094    0.000    2.595    0.002 _axis_nan_policy.py:426(axis_nan_policy_wrapper)
+4181/4174    0.087    0.000    0.088    0.000 {built-in method numpy.asarray}
+57232/57199    0.079    0.000    0.090    0.000 {built-in method builtins.isinstance}
+     1170    0.078    0.000    0.608    0.001 _stats_py.py:7775(ks_2samp)
+       13    0.071    0.005    0.083    0.006 _methods.py:148(_var)
+     2351    0.067    0.000    0.312    0.000 inspect.py:2331(_signature_from_function)
+     2377    0.065    0.000    0.065    0.000 {method 'searchsorted' of 'numpy.ndarray' objects}
+        1    0.064    0.064   11.159   11.159 auto.py:37(baseline_norm_cl)
+47872/47555    0.063    0.000    0.064    0.000 {built-in method builtins.len}
+
+
