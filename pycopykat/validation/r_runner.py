@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 
-_DEFAULT_DRIVER = Path(__file__).resolve().parents[3] / "scripts" / "run_r_copykat.R"
+_DEFAULT_DRIVER = Path(__file__).resolve().parents[2] / "scripts" / "run_r_copykat.R"
 
 
 def run_r_copykat(

@@ -21,12 +21,12 @@ if TYPE_CHECKING:
 def _data_dir() -> Path:
     """Return the project-level ``data/`` directory.
 
-    Resolution assumes the installed layout ``<root>/src/pycopykat/io/annotation.py``
-    so that ``parents[3]`` is the project root. With ``pip install -e .`` this
+    Resolution assumes the installed layout ``<root>/pycopykat/io/annotation.py``
+    so that ``parents[2]`` is the project root. With ``pip install -e .`` this
     works; for a wheel install the same parquet files should be shipped via
     package data — V1 sticks with the editable layout.
     """
-    return Path(__file__).resolve().parents[3] / "data"
+    return Path(__file__).resolve().parents[2] / "data"
 
 
 def load_hg20_annotation() -> pd.DataFrame:
