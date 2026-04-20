@@ -159,7 +159,7 @@ Developed following the [omicverse-to-developer](https://github.com/omicverse/om
 
 If you use this package, please cite the original CopyKAT paper:
 
-> Gao, R., Bai, S., Henderson, Y.C. *et al.* **Delineating copy number and clonal substructure in human tumors from single-cell transcriptomes.** *Nature Biotechnology* **39**, 599–608 (2021). <https://doi.org/10.1038/s41587-020-00795-2>
+> Gao R, Bai S, Henderson YC, et al. Delineating copy number and clonal substructure in human tumors from single-cell transcriptomes. Nat Biotechnol. 2021;39(5):599-608. doi:10.1038/s41587-020-00795-2
 
 and acknowledge omicverse / this repository for the Python port.
 
