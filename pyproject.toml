@@ -59,6 +59,8 @@ dev = [
   "ruff>=0.4",
   "mypy>=1.9",
   "ipykernel",
+  "nbformat>=5.9",
+  "nbclient>=0.10",
 ]
 
 [project.scripts]

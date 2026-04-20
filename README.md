@@ -58,9 +58,10 @@ counts = pd.read_csv("counts.tsv", sep="\t", index_col=0)  # genes × cells
 result = copykat(counts, config=CopykatConfig(n_jobs=8, sam_name="sample"))
 
 result.prediction       # DataFrame[cell, copykat.pred] with aneuploid/diploid/not.defined
-result.cna_mat          # bin × cell CNA matrix
-result.clustering       # Ward linkage + cluster assignments
-result.warnings         # any runtime warnings
+result.cna_mat          # bin × cell CNA matrix (MultiIndex: chrom, start, end)
+result.linkage          # scipy Ward linkage matrix, (n-1, 4)
+result.subclone         # Series: aneuploid cell → subclone label (int)
+result.warnings         # tuple of runtime warning strings
 ```
 
 ### h5ad batch driver
