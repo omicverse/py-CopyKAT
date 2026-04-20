@@ -32,7 +32,6 @@ from sklearn.metrics import silhouette_samples
 from sklearn.mixture import GaussianMixture
 
 from pycopykat.baseline._shared import BaselineResult, ward_cluster_with_min_size
-from pycopykat.kernels.distances import pdist_euclidean
 
 
 def baseline_norm_cl(
@@ -65,7 +64,7 @@ def baseline_norm_cl(
     # ---- step 1: Ward cluster in cell-space with k floor at 2 ----
     # R uses `table(ct) > min.cells` (strictly greater) as the backoff test, so
     # pass min_cells + 1 to the helper (which uses `>=`) to match R semantics.
-    labels, Z = ward_cluster_with_min_size(
+    labels, Z, d = ward_cluster_with_min_size(
         X.T, initial_k=6, min_cells=min_cells + 1,
         distance="euclidean", k_floor=2,
     )
@@ -101,7 +100,9 @@ def baseline_norm_cl(
     SDM_arr = np.asarray(SDM, dtype=np.float64)
 
     # ---- step 4: silhouette at k=2 on the same Ward tree ----
-    d = pdist_euclidean(X.T.astype(np.float64))
+    # A5: reuse the condensed distance `d` already computed inside
+    # ward_cluster_with_min_size — feed its squareform to
+    # silhouette_samples(metric="precomputed") to avoid a second pdist.
     D = squareform(d)
     labels_k2 = fcluster(Z, t=2, criterion="maxclust")
     if np.unique(labels_k2).size >= 2:

@@ -56,7 +56,7 @@ def ward_cluster_with_min_size(
     min_cells: int = 10,
     distance: str = "euclidean",
     k_floor: int = 1,
-) -> tuple[NDArray[np.int_], NDArray[np.float64]]:
+) -> tuple[NDArray[np.int_], NDArray[np.float64], NDArray[np.float64]]:
     """Ward-link hierarchical clustering honouring a minimum cluster size.
 
     Parameters
@@ -77,9 +77,12 @@ def ward_cluster_with_min_size(
 
     Returns
     -------
-    (labels, Z)
+    (labels, Z, d)
         ``labels`` is a length-``n_points`` 1-based integer array.
         ``Z`` is the scipy linkage matrix (``n-1`` rows).
+        ``d`` is the condensed distance vector (``n*(n-1)/2``) computed with
+        the selected metric — returned so callers can reuse it (e.g. for
+        ``silhouette_samples(metric="precomputed")``) without recomputing.
     """
     if distance not in _DIST_FN:
         raise ValueError(f"distance must be one of {list(_DIST_FN)}, got {distance!r}")
@@ -94,11 +97,11 @@ def ward_cluster_with_min_size(
         labels = fcluster(Z, t=k, criterion="maxclust")
         counts = np.bincount(labels)[1:]
         if counts.size > 0 and counts.min() >= min_cells:
-            return labels.astype(np.int_), Z
+            return labels.astype(np.int_), Z, d
         k -= 1
 
     # Hit the floor — return whatever that cut yields.
     if k_floor == 1:
-        return np.ones(X.shape[0], dtype=np.int_), Z
+        return np.ones(X.shape[0], dtype=np.int_), Z, d
     labels = fcluster(Z, t=k_floor, criterion="maxclust")
-    return labels.astype(np.int_), Z
+    return labels.astype(np.int_), Z, d

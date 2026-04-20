@@ -74,7 +74,7 @@ def baseline_synthetic(
     if len(cell_names) != n_cells:
         raise ValueError(f"cell_names length {len(cell_names)} != {n_cells} cells")
 
-    labels, _Z = ward_cluster_with_min_size(
+    labels, _Z, _d = ward_cluster_with_min_size(
         X.T, initial_k=6, min_cells=min_cells + 1,
         distance="euclidean", k_floor=2,
     )

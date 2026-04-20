@@ -97,7 +97,7 @@ def baseline_gmm(
                 break
 
     # Ward k=6 (no backoff in R) for the labels field; clamp to n_cells.
-    labels, _Z = ward_cluster_with_min_size(
+    labels, _Z, _d = ward_cluster_with_min_size(
         X.T, initial_k=min(6, max(2, n_cells - 1)),
         min_cells=1, distance="euclidean", k_floor=2,
     )
