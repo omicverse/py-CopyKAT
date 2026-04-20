@@ -26,6 +26,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from scipy import sparse
 from scipy.cluster.hierarchy import fcluster, linkage
 
 from pycopykat.baseline.auto import baseline_norm_cl
@@ -36,7 +37,11 @@ from pycopykat.classify.predict import predict_ploidy
 from pycopykat.classify.subclone import dynamic_tree_cut
 from pycopykat.cna.bins import aggregate_to_bins
 from pycopykat.config import CopykatConfig
-from pycopykat.io.annotation import annotate_genes, load_hg20_bins
+from pycopykat.io.annotation import (
+    annotate_gene_names,
+    annotate_genes,
+    load_hg20_bins,
+)
 from pycopykat.kernels.distances import (
     pdist_euclidean,
     pdist_pearson,
@@ -44,7 +49,9 @@ from pycopykat.kernels.distances import (
 )
 from pycopykat.preprocess.filter import (
     filter_cells_and_genes,
+    filter_cells_and_genes_sparse,
     filter_cells_by_chrom_coverage,
+    filter_cells_by_chrom_coverage_sparse,
 )
 from pycopykat.preprocess.normalize import vst_center
 from pycopykat.preprocess.smooth import smooth_cells
@@ -88,64 +95,28 @@ def _cluster_for_segmentation(
     return fcluster(Z, t=k, criterion="maxclust").astype(np.int_)
 
 
-def copykat(
-    mat: pd.DataFrame,
-    config: CopykatConfig | None = None,
-    **kwargs: object,
+def _run_pipeline_post_step3(
+    *,
+    raw_counts_dense: NDArray[np.float64],
+    raw_counts_nz_sparse: sparse.spmatrix | None,
+    gene_anno: pd.DataFrame,
+    cell_cols: list[str],
+    up_dr: float,
+    warnings: list[str],
+    cfg: CopykatConfig,
 ) -> CopykatResult:
-    """Full CopyKAT pipeline.
+    """Run steps 4..12 given a post-stage-1-chrom-filter (genes, cells) state.
 
-    Parameters
-    ----------
-    mat
-        Genes × cells raw count DataFrame. Index holds gene identifiers.
-    config
-        Optional :class:`CopykatConfig`. Overrides defaults. If omitted,
-        ``kwargs`` populate the config.
+    The two entry points (``copykat`` DataFrame path and sparse helper) both
+    converge here after step 3. ``raw_counts_dense`` is the dense matrix
+    consumed by VST in step 4. ``raw_counts_nz_sparse`` — if provided — is the
+    companion sparse matrix used for the step 7 UP.DR gate and the stage-2
+    chromosome coverage filter; when ``None`` the dense path recomputes both
+    from ``raw_counts_dense`` (bit-identical to pre-S1).
     """
-    cfg = config or CopykatConfig(**kwargs)  # type: ignore[arg-type]
-    if not isinstance(mat, pd.DataFrame):
-        raise TypeError("pass a pandas DataFrame with gene names in the index")
-
-    warnings: list[str] = []
-
-    # ── step 1: filter cells + genes by LOW.DR ────────────────────────────────
-    log.info("step 1/12: filter cells & genes")
-    mat1, stat1 = filter_cells_and_genes(
-        mat, min_gene_per_cell=cfg.min_gene_per_cell, low_dr=cfg.low_dr
-    )
-    if stat1["data_quality"] == "low":
-        warnings.append("low data quality — UP.DR set to LOW.DR")
-        up_dr = cfg.low_dr
-    else:
-        up_dr = cfg.up_dr
-
-    # ── step 2: annotate ─────────────────────────────────────────────────────
-    log.info("step 2/12: annotate gene coordinates")
-    annotated = annotate_genes(mat1, id_type=cfg.id_type, genome=cfg.genome)
-    cell_cols = [c for c in annotated.columns if c not in _ANNO_COLS]
-    anno_present = [c for c in _ANNO_COLS if c in annotated.columns]
-    gene_anno = annotated[anno_present].copy().reset_index(drop=True)
-    raw_counts = annotated[cell_cols].to_numpy(dtype=np.float64)
-
-    # ── step 3: stage-1 chromosome-coverage cell filter ───────────────────────
-    log.info("step 3/12: stage-1 chromosome coverage filter")
-    chrom_int = gene_anno["chromosome_name"].to_numpy(dtype=np.int64)
-    _, dropped1 = filter_cells_by_chrom_coverage(
-        raw_counts, chrom_int, ngene_chr=cfg.ngene_chr
-    )
-    keep1 = np.ones(len(cell_cols), dtype=bool)
-    keep1[dropped1] = False
-    cell_cols = [c for i, c in enumerate(cell_cols) if keep1[i]]
-    raw_counts = raw_counts[:, keep1]
-    if len(cell_cols) < 10:
-        raise ValueError(
-            f"too few cells after stage-1 chrom coverage filter: {len(cell_cols)}"
-        )
-
     # ── step 4: VST + center ─────────────────────────────────────────────────
     log.info("step 4/12: VST + per-cell centering")
-    X_norm = vst_center(raw_counts)
+    X_norm = vst_center(raw_counts_dense)
 
     # ── step 5: Kalman smoothing ─────────────────────────────────────────────
     log.info("step 5/12: Kalman smoothing")
@@ -197,19 +168,37 @@ def copykat(
 
     # ── step 7: UP.DR filter (on raw counts) + stage-2 chrom coverage ─────────
     log.info("step 7/12: UP.DR + stage-2 chromosome coverage filter")
-    DR2 = (raw_counts > 0).sum(axis=1) / raw_counts.shape[1]
+    if raw_counts_nz_sparse is not None:
+        # Sparse-path: gene DR from row-nnz is O(nnz); stage-2 coverage runs
+        # on the CSC matrix (column-nnz + per-cell bincount over rows).
+        n_cells_cur = raw_counts_nz_sparse.shape[1]
+        sparse_csr = raw_counts_nz_sparse.tocsr()
+        DR2 = sparse_csr.getnnz(axis=1) / n_cells_cur
+    else:
+        DR2 = (raw_counts_dense > 0).sum(axis=1) / raw_counts_dense.shape[1]
     keep_g = DR2 >= up_dr
-    gene_anno, raw_counts = _subset_gene_rows(gene_anno, raw_counts, keep_g)
+    # Apply gene keep to annotation + dense matrices. When sparse is active,
+    # we also slice the sparse companion so stage-2 chrom coverage stays sparse.
+    gene_anno = gene_anno.loc[keep_g].reset_index(drop=True)
+    raw_counts_dense = raw_counts_dense[keep_g]
     norm_relat = norm_relat[keep_g]
-    chrom_int = gene_anno["chromosome_name"].to_numpy(dtype=np.int64)
+    if raw_counts_nz_sparse is not None:
+        # Row-slice CSR (efficient) then convert to CSC for column-oriented ops.
+        sparse_csr = raw_counts_nz_sparse.tocsr()[keep_g, :]
+        chrom_int = gene_anno["chromosome_name"].to_numpy(dtype=np.int64)
+        _, dropped2 = filter_cells_by_chrom_coverage_sparse(
+            sparse_csr, chrom_int, ngene_chr=cfg.ngene_chr
+        )
+    else:
+        chrom_int = gene_anno["chromosome_name"].to_numpy(dtype=np.int64)
+        _, dropped2 = filter_cells_by_chrom_coverage(
+            raw_counts_dense, chrom_int, ngene_chr=cfg.ngene_chr
+        )
 
-    _, dropped2 = filter_cells_by_chrom_coverage(
-        raw_counts, chrom_int, ngene_chr=cfg.ngene_chr
-    )
     keep2 = np.ones(len(cell_cols), dtype=bool)
     keep2[dropped2] = False
     cell_cols = [c for i, c in enumerate(cell_cols) if keep2[i]]
-    raw_counts = raw_counts[:, keep2]
+    raw_counts_dense = raw_counts_dense[:, keep2]
     norm_relat = norm_relat[:, keep2]
     preN = [c for c in preN if c in set(cell_cols)]
     if len(cell_cols) < 10:
@@ -316,4 +305,160 @@ def copykat(
         linkage=Z_final,
         subclone=subclone,
         warnings=tuple(w for w in warnings if w),
+    )
+
+
+def copykat(
+    mat: pd.DataFrame,
+    config: CopykatConfig | None = None,
+    **kwargs: object,
+) -> CopykatResult:
+    """Full CopyKAT pipeline.
+
+    Parameters
+    ----------
+    mat
+        Genes × cells raw count DataFrame. Index holds gene identifiers.
+    config
+        Optional :class:`CopykatConfig`. Overrides defaults. If omitted,
+        ``kwargs`` populate the config.
+    """
+    cfg = config or CopykatConfig(**kwargs)  # type: ignore[arg-type]
+    if not isinstance(mat, pd.DataFrame):
+        raise TypeError("pass a pandas DataFrame with gene names in the index")
+
+    warnings: list[str] = []
+
+    # ── step 1: filter cells + genes by LOW.DR ────────────────────────────────
+    log.info("step 1/12: filter cells & genes")
+    mat1, stat1 = filter_cells_and_genes(
+        mat, min_gene_per_cell=cfg.min_gene_per_cell, low_dr=cfg.low_dr
+    )
+    if stat1["data_quality"] == "low":
+        warnings.append("low data quality — UP.DR set to LOW.DR")
+        up_dr = cfg.low_dr
+    else:
+        up_dr = cfg.up_dr
+
+    # ── step 2: annotate ─────────────────────────────────────────────────────
+    log.info("step 2/12: annotate gene coordinates")
+    annotated = annotate_genes(mat1, id_type=cfg.id_type, genome=cfg.genome)
+    cell_cols = [c for c in annotated.columns if c not in _ANNO_COLS]
+    anno_present = [c for c in _ANNO_COLS if c in annotated.columns]
+    gene_anno = annotated[anno_present].copy().reset_index(drop=True)
+    raw_counts = annotated[cell_cols].to_numpy(dtype=np.float64)
+
+    # ── step 3: stage-1 chromosome-coverage cell filter ───────────────────────
+    log.info("step 3/12: stage-1 chromosome coverage filter")
+    chrom_int = gene_anno["chromosome_name"].to_numpy(dtype=np.int64)
+    _, dropped1 = filter_cells_by_chrom_coverage(
+        raw_counts, chrom_int, ngene_chr=cfg.ngene_chr
+    )
+    keep1 = np.ones(len(cell_cols), dtype=bool)
+    keep1[dropped1] = False
+    cell_cols = [c for i, c in enumerate(cell_cols) if keep1[i]]
+    raw_counts = raw_counts[:, keep1]
+    if len(cell_cols) < 10:
+        raise ValueError(
+            f"too few cells after stage-1 chrom coverage filter: {len(cell_cols)}"
+        )
+
+    return _run_pipeline_post_step3(
+        raw_counts_dense=raw_counts,
+        raw_counts_nz_sparse=None,
+        gene_anno=gene_anno,
+        cell_cols=cell_cols,
+        up_dr=up_dr,
+        warnings=warnings,
+        cfg=cfg,
+    )
+
+
+def _copykat_from_sparse(
+    X_sparse: sparse.spmatrix,
+    gene_names: "np.ndarray | list[str]",
+    cell_names: "np.ndarray | list[str]",
+    config: CopykatConfig,
+) -> CopykatResult:
+    """Internal sparse-path entry for the copykat pipeline.
+
+    Keeps raw counts in ``scipy.sparse`` through steps 1–3 (and through the
+    step-7 stage-2 chrom-coverage filter). Step 4 (VST + centering) densifies,
+    matching the S1 scope. Public API (``copykat``) is unchanged.
+
+    Parameters
+    ----------
+    X_sparse
+        Genes × cells sparse count matrix. Any scipy.sparse format; the
+        helpers convert once to CSR/CSC as needed.
+    gene_names, cell_names
+        String axis labels matching ``X_sparse``'s rows / columns.
+    config
+        :class:`CopykatConfig`. Not wrapped here — the caller is responsible
+        for batch-scoped ``sam_name`` etc.
+    """
+    cfg = config
+    gene_names = np.asarray(gene_names, dtype=object)
+    cell_names = np.asarray(cell_names, dtype=object)
+    if not sparse.issparse(X_sparse):
+        raise TypeError("X_sparse must be a scipy.sparse matrix")
+
+    warnings: list[str] = []
+
+    # ── step 1: filter cells + genes by LOW.DR ────────────────────────────────
+    log.info("step 1/12: filter cells & genes (sparse)")
+    X1, genes1, cells1, stat1 = filter_cells_and_genes_sparse(
+        X_sparse,
+        gene_names,
+        cell_names,
+        min_gene_per_cell=cfg.min_gene_per_cell,
+        low_dr=cfg.low_dr,
+    )
+    if stat1["data_quality"] == "low":
+        warnings.append("low data quality — UP.DR set to LOW.DR")
+        up_dr = cfg.low_dr
+    else:
+        up_dr = cfg.up_dr
+
+    # ── step 2: annotate — metadata-only, sparse matrix untouched ─────────────
+    log.info("step 2/12: annotate gene coordinates (sparse)")
+    gene_anno_full, row_idx = annotate_gene_names(
+        genes1, id_type=cfg.id_type, genome=cfg.genome
+    )
+    # Row-slice the sparse matrix once into annotated-gene order. CSR is
+    # efficient for row slicing; result stays CSR.
+    X_ann = X1.tocsr()[row_idx, :]
+    # Drop the merge key column that annotate_gene_names surfaced via
+    # hgnc_symbol/ensembl_gene_id — annotate_genes keeps only _ANNO_COLS in
+    # the downstream gene_anno.
+    anno_present = [c for c in _ANNO_COLS if c in gene_anno_full.columns]
+    gene_anno = gene_anno_full[anno_present].copy().reset_index(drop=True)
+    cell_cols = cells1.astype(str).tolist()
+
+    # ── step 3: stage-1 chromosome-coverage cell filter ───────────────────────
+    log.info("step 3/12: stage-1 chromosome coverage filter (sparse)")
+    chrom_int = gene_anno["chromosome_name"].to_numpy(dtype=np.int64)
+    X_csc, dropped1 = filter_cells_by_chrom_coverage_sparse(
+        X_ann, chrom_int, ngene_chr=cfg.ngene_chr
+    )
+    if dropped1:
+        keep1 = np.ones(len(cell_cols), dtype=bool)
+        keep1[dropped1] = False
+        cell_cols = [c for i, c in enumerate(cell_cols) if keep1[i]]
+    if len(cell_cols) < 10:
+        raise ValueError(
+            f"too few cells after stage-1 chrom coverage filter: {len(cell_cols)}"
+        )
+
+    # ── densify at step-4 boundary; keep sparse companion for step 7 ─────────
+    raw_counts_dense = X_csc.toarray().astype(np.float64, copy=False)
+
+    return _run_pipeline_post_step3(
+        raw_counts_dense=raw_counts_dense,
+        raw_counts_nz_sparse=X_csc,
+        gene_anno=gene_anno,
+        cell_cols=cell_cols,
+        up_dr=up_dr,
+        warnings=warnings,
+        cfg=cfg,
     )

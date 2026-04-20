@@ -8,8 +8,14 @@ behaviour (copykat.R lines ~70-82).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import numpy as np
 
 
 def _data_dir() -> Path:
@@ -37,6 +43,68 @@ def load_hg20_cycle_genes() -> list[str]:
 def load_hg20_bins() -> pd.DataFrame:
     """Load the hg20 220 kb genomic bin table."""
     return pd.read_parquet(_data_dir() / "hg20_220kb_bins.parquet")
+
+
+def annotate_gene_names(
+    gene_names: "Sequence[str] | np.ndarray",
+    *,
+    id_type: str = "Symbol",
+    genome: str = "hg20",
+) -> tuple[pd.DataFrame, "np.ndarray"]:
+    """Lookup hg20 coordinates for a bare gene-name list.
+
+    Sparse-path analog of :func:`annotate_genes` that does NOT need the
+    expression matrix attached. Returns the matched annotation DataFrame in
+    the same row order as :func:`annotate_genes` produces, plus an integer
+    index array mapping the annotated rows back to positions in the input
+    ``gene_names``. The caller uses ``row_idx`` to row-slice the sparse
+    counts matrix once.
+
+    Parameters
+    ----------
+    gene_names
+        Input gene identifiers aligned with the rows of the counts matrix.
+    id_type
+        ``"Symbol"`` or ``"Ensembl"``.
+    genome
+        Only ``"hg20"`` supported.
+
+    Returns
+    -------
+    (gene_anno, row_idx)
+        ``gene_anno`` is the annotation subset (HLA and cell-cycle dropped,
+        sorted by ``abspos``). ``row_idx`` is an integer array with one
+        entry per annotated row giving the corresponding row position in
+        ``gene_names``.
+    """
+    import numpy as np
+
+    if genome != "hg20":
+        raise NotImplementedError(f"V1 only supports genome='hg20', got {genome!r}")
+    if id_type not in ("Symbol", "Ensembl"):
+        raise ValueError(f"id_type must be 'Symbol' or 'Ensembl', got {id_type!r}")
+
+    ann = load_hg20_annotation()
+    key = "hgnc_symbol" if id_type == "Symbol" else "ensembl_gene_id"
+    ann = ann.dropna(subset=[key]).drop_duplicates(subset=[key])
+
+    names = np.asarray(gene_names)
+    # Use the same merge-then-filter order as annotate_genes so the resulting
+    # row order matches bit-for-bit.
+    expr_reset = pd.DataFrame(
+        {key: names, "__row_idx": np.arange(names.size, dtype=np.int64)}
+    )
+    merged = ann.merge(expr_reset, on=key, how="inner")
+
+    cyc = set(load_hg20_cycle_genes())
+    is_hla = merged["hgnc_symbol"].astype(str).str.startswith("HLA-")
+    is_cyc = merged["hgnc_symbol"].isin(cyc)
+    merged = merged.loc[~(is_hla | is_cyc)].copy()
+
+    merged = merged.sort_values("abspos", kind="mergesort").reset_index(drop=True)
+    row_idx = merged["__row_idx"].to_numpy(dtype=np.int64)
+    gene_anno = merged.drop(columns="__row_idx")
+    return gene_anno, row_idx
 
 
 def annotate_genes(

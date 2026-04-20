@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 
 from pycopykat.io.annotation import (
+    annotate_gene_names,
     annotate_genes,
     load_hg20_annotation,
     load_hg20_bins,
@@ -89,3 +90,40 @@ def test_annotate_genes_rejects_non_hg20():
     except NotImplementedError:
         return
     raise AssertionError("expected NotImplementedError for genome='hg19'")
+
+
+def test_annotate_gene_names_matches_annotate_genes_ordering():
+    """Sparse-path parity canary for the S1 patch.
+
+    ``annotate_gene_names`` is used by the sparse pipeline to get the same
+    post-HLA-and-cycle, abspos-sorted annotation that ``annotate_genes``
+    produces for the DataFrame path. Any ordering drift here breaks the
+    end-to-end `np.allclose(atol=1e-10)` gate on the sparse pipeline.
+    """
+    ann = load_hg20_annotation()
+    # Sample a large mixed set: some HLA-, some cycle genes, some ordinary.
+    all_syms = (
+        ann.dropna(subset=["hgnc_symbol"])["hgnc_symbol"]
+        .drop_duplicates()
+        .tolist()
+    )
+    rng = np.random.default_rng(13)
+    syms = rng.choice(all_syms, size=400, replace=False).tolist()
+    # Also include a couple of genes not in the annotation to test the
+    # drop-on-merge path.
+    syms = [*syms, "NOT_A_REAL_GENE_42", "ZZZ_FAKE_XYZ"]
+    mat = pd.DataFrame(
+        np.zeros((len(syms), 2)), index=syms, columns=["c1", "c2"]
+    )
+
+    out_full = annotate_genes(mat, id_type="Symbol", genome="hg20")
+    gene_anno, row_idx = annotate_gene_names(syms, id_type="Symbol", genome="hg20")
+
+    # Row count + hgnc_symbol order must match bit-exactly.
+    assert len(gene_anno) == len(out_full)
+    assert gene_anno["hgnc_symbol"].tolist() == out_full["hgnc_symbol"].tolist()
+    # abspos must be monotonic (sort is stable in annotate_gene_names too)
+    assert gene_anno["abspos"].is_monotonic_increasing
+    # row_idx must point to the same gene rows in the input order.
+    recovered = [syms[i] for i in row_idx]
+    assert recovered == gene_anno["hgnc_symbol"].tolist()

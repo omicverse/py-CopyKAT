@@ -15,18 +15,32 @@ assumption.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from scipy import sparse
 
 from pycopykat.config import CopykatConfig
 from pycopykat.io.annotation import load_hg20_bins
-from pycopykat.pipeline import copykat
+from pycopykat.pipeline import _copykat_from_sparse, copykat
 
 if TYPE_CHECKING:
     from anndata import AnnData
+
+
+@dataclass(slots=True)
+class _SparseBatch:
+    """Per-batch sparse payload: genes × cells CSC with string axis labels."""
+    X: sparse.spmatrix  # genes × cells
+    gene_names: np.ndarray
+    cell_names: np.ndarray
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (int(self.X.shape[0]), int(self.X.shape[1]))
 
 _PRED_COL = "copykat_pred"
 _SUBCLONE_COL = "copykat_subclone"
@@ -39,24 +53,35 @@ _META_KEY = "copykat_per_batch"
 
 def _extract_counts_frame(
     adata: "AnnData", cells: np.ndarray, layer: str | None
-) -> pd.DataFrame:
-    """Return a genes × cells DataFrame for the given cell mask."""
+) -> "pd.DataFrame | _SparseBatch":
+    """Return a genes × cells batch payload for the given cell mask.
+
+    When the source AnnData matrix is sparse, keep it sparse (CSC, since
+    genes × cells means cells are columns) and return a ``_SparseBatch`` so
+    the pipeline can run step-1..3 on the sparse matrix. Dense AnnData .X
+    still produces a pandas DataFrame to preserve the original public code
+    path bit-identically.
+    """
     sub = adata[cells, :]
     X = sub.layers[layer] if layer is not None else sub.X
-    if hasattr(X, "toarray"):
-        X = X.toarray()
+    gene_names = np.asarray(sub.var_names.astype(str).to_numpy())
+    cell_names = np.asarray(sub.obs_names.astype(str).to_numpy())
+    if sparse.issparse(X):
+        # AnnData stores cells × genes. Transpose once to genes × cells; CSR.T
+        # is CSC for free (same buffers, no copy), which is what we want for
+        # column-oriented cell slicing downstream.
+        X_T = X.T
+        if not sparse.issparse(X_T):
+            X_T = sparse.csc_matrix(X_T)
+        return _SparseBatch(X=X_T, gene_names=gene_names, cell_names=cell_names)
+    # Dense fallback — preserves the original DataFrame path exactly.
     X = np.asarray(X, dtype=np.float64)
-    # AnnData stores cells × genes → transpose to genes × cells
-    return pd.DataFrame(
-        X.T,
-        index=sub.var_names.astype(str),
-        columns=sub.obs_names.astype(str),
-    )
+    return pd.DataFrame(X.T, index=gene_names, columns=cell_names)
 
 
 def _run_one_batch(
     batch_label: str,
-    counts: pd.DataFrame,
+    counts: "pd.DataFrame | _SparseBatch",
     config: CopykatConfig,
 ) -> dict[str, object]:
     """Run the copykat pipeline for one batch and return a small payload dict."""
@@ -81,7 +106,14 @@ def _run_one_batch(
         seed=config.seed,
         backend=config.backend,
     )
-    res = copykat(counts, config=cfg)
+    if isinstance(counts, _SparseBatch):
+        res = _copykat_from_sparse(
+            counts.X, counts.gene_names, counts.cell_names, config=cfg
+        )
+        n_cells_in = counts.shape[1]
+    else:
+        res = copykat(counts, config=cfg)
+        n_cells_in = counts.shape[1]
     elapsed_min = (time.time() - t0) / 60.0
     return {
         "batch": batch_label,
@@ -90,7 +122,7 @@ def _run_one_batch(
         "subclone": res.subclone,
         "warnings": res.warnings,
         "elapsed_min": elapsed_min,
-        "n_cells_in": counts.shape[1],
+        "n_cells_in": n_cells_in,
         "n_cells_out": int(res.prediction.shape[0]),
     }
 
@@ -197,7 +229,7 @@ def copykat_by_batch(
     batch_out = batch_series.to_numpy().astype(object)
 
     per_batch_meta: dict[str, dict[str, object]] = {}
-    to_run: list[tuple[str, pd.DataFrame]] = []
+    to_run: list[tuple[str, "pd.DataFrame | _SparseBatch"]] = []
 
     for batch_label, idx in batch_series.groupby(batch_series).groups.items():
         cell_mask = np.asarray(idx.to_numpy(), dtype=object)
@@ -212,7 +244,9 @@ def copykat_by_batch(
         counts = _extract_counts_frame(ad, cell_mask, layer)
         to_run.append((str(batch_label), counts))
 
-    def _wrap(pair: tuple[str, pd.DataFrame]) -> tuple[str, dict[str, object] | BaseException]:
+    def _wrap(
+        pair: tuple[str, "pd.DataFrame | _SparseBatch"],
+    ) -> tuple[str, dict[str, object] | BaseException]:
         label, cnt = pair
         try:
             return label, _run_one_batch(label, cnt, config)
