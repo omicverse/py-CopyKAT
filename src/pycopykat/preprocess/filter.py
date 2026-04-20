@@ -86,18 +86,22 @@ def filter_cells_by_chrom_coverage(
     -------
     (filtered_X, dropped_cell_indices)
     """
+    # Vectorized: permute rows by chrom id, then per-cell per-chrom nonzero
+    # counts fall out of a single np.add.reduceat call on the boolean matrix.
     n_cells = X.shape[1]
-    unique_chroms = np.unique(chrom)
-    dropped: list[int] = []
-    for j in range(n_cells):
-        nz = X[:, j] > 0
-        if int(nz.sum()) < 5:
-            dropped.append(j)
-            continue
-        for k in unique_chroms:
-            if int((nz & (chrom == k)).sum()) < ngene_chr:
-                dropped.append(j)
-                break
-    keep_mask = np.ones(n_cells, dtype=bool)
-    keep_mask[dropped] = False
+    nz = X > 0  # (n_genes, n_cells) bool
+    total_nz = nz.sum(axis=0)  # per-cell total
+
+    _unique_chroms, chrom_idx = np.unique(chrom, return_inverse=True)
+    order = np.argsort(chrom_idx, kind="stable")
+    nz_ord = nz[order]
+    chrom_ord = chrom_idx[order]
+    # seg_starts[i] = first row in nz_ord belonging to chrom id i
+    seg_starts = np.searchsorted(chrom_ord, np.arange(_unique_chroms.size))
+    per_chrom_nz = np.add.reduceat(nz_ord, seg_starts, axis=0)
+    # (n_chr, n_cells); cells with any chrom below threshold are dropped
+    drop_mask = (total_nz < 5) | (per_chrom_nz < ngene_chr).any(axis=0)
+    dropped: list[int] = np.flatnonzero(drop_mask).tolist()
+
+    keep_mask = ~drop_mask
     return X[:, keep_mask], dropped
