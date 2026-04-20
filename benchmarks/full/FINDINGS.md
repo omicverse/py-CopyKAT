@@ -25,9 +25,14 @@ minimum-sigma cluster.
 | median py↔R ARI | — | **0.988** |
 | mean py↔R ARI | — | 0.922 |
 | mean py↔R FMI | — | 0.971 |
-| mean runtime (8 cores, full workflow) | 11.6 min | **1.3 min** |
-| median py-vs-R speedup | — | **11.6×** |
-| mean py-vs-R speedup | — | **10.5×** |
+| mean runtime (8 cores, full workflow) | 11.6 min | **0.52 min** |
+| median py-vs-R speedup | — | **23.7×** |
+| mean py-vs-R speedup | — | **31.5×** |
+
+Speedup numbers reflect the post-P1 BLAS pdist rewrite (commit
+`32eaf92`). ARI / accuracy metrics are bit-stable across the pre-P1 and
+post-P1 runs — every per-patient py↔R ARI is identical to six decimals;
+see `py_vs_r_summary.post_s2.csv` for the pre-P1 baseline.
 
 ## 17-patient outcome classification
 
@@ -97,6 +102,32 @@ preserved in `py_vs_r_summary.pre_A8.csv`, `label_agnostic_summary.pre_A8.csv`,
 
 No patient regressed by > 0.05 ARI; the regression gate defined in the
 rerun spec was never tripped.
+
+## Phase-3 deltas (post-P1 BLAS pdist, commit `32eaf92`)
+
+P1 replaces `scipy.spatial.distance.pdist(X, "euclidean")` with the
+identity `||a-b||² = ||a||² + ||b||² - 2·a·bᵀ` via a single GEMM.
+OpenBLAS 0.3.31 parallelises the GEMM across the 8 cores that scipy's
+single-threaded C kernel was leaving idle. The identity-form output
+matches scipy's pdist to ≤1e-8 absolute error; the small-N (<100)
+branch still routes to scipy.
+
+Against the pre-P1 sweep (`py_vs_r_summary.post_s2.csv`):
+
+* **median py-vs-R wall-clock speedup: 11.6× → 23.7×** (2.04×)
+* **mean py-vs-R wall-clock speedup: 10.5× → 31.5×** (3.01×)
+* **mean py runtime: 1.3 min → 0.52 min**
+* **median/mean/min py↔R ARI: bit-identical to 6 decimals** across all
+  17 patients — every per-patient ARI Δ = 0.000000 to reported precision
+
+Kim P0019 per-step wall-clock (from `benchmarks/scaling/profile_post_s2.md`):
+
+* step 6 (baseline estimation):  11.10 s → 1.49 s (7.4×)
+* step 11 (predict ploidy):      16.13 s → 0.97 s (16.6×)
+* total pipeline wall-clock:     33.50 s → 8.61 s (3.9×)
+
+Cumulative (pre-Phase-1 → post-P1): Kim P0019 ~90 s → 8.6 s (~10×
+end-to-end; ~43× on step 11 alone from its pre-A8 baseline).
 
 ## Per-patient table
 
