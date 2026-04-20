@@ -5,19 +5,19 @@ expression, :func:`segment_cells`:
 
 1. Computes per-cluster consensus (gene-wise median) signals.
 2. Takes the **union** of breakpoints detected on each consensus signal.
-3. For every cell independently, replaces each segment's values with the
-   posterior mean of a Poisson-Gamma model conditioned on the segment's
-   data (Numba kernel in :mod:`pycopykat.kernels.mcmc_pg`).
+3. For every segment of the shared breakpoint set, computes the analytical
+   Poisson-Gamma posterior mean of each cell's expression on that segment
+   (``(α + Σy) / (1 + n_seg)``) in one :func:`numpy.add.reduceat` call, then
+   broadcasts the ``(n_seg, n_cells)`` result back into ``(n_genes, n_cells)``
+   via :func:`numpy.repeat`.
 4. Returns ``log`` of the piecewise-constant matrix (``logCNA``) plus the
    breakpoint list.
 """
 from __future__ import annotations
 
 import numpy as np
-from joblib import Parallel, delayed
 from numpy.typing import NDArray
 
-from pycopykat.kernels.mcmc_pg import pg_posterior_mean_analytic
 from pycopykat.segment.breakpoint import find_breakpoints
 
 
@@ -50,23 +50,6 @@ def _union_breaks(
     return sorted(all_breaks)
 
 
-def _segment_one_cell(
-    col: NDArray[np.floating], BR: list[int], seed: int, mc: int
-) -> NDArray[np.float64]:
-    x = np.empty_like(col, dtype=np.float64)
-    # Segment i occupies [BR[i], BR[i+1]] (inclusive); subsequent segments start
-    # at BR[i]+1 so boundary indices never get written twice.
-    for i in range(len(BR) - 1):
-        s = BR[i] if i == 0 else BR[i] + 1
-        e = BR[i + 1]
-        seg = col[s : e + 1]
-        a = max(float(seg.mean()), 1e-3)
-        # Analytical posterior mean of Gamma(a + Σseg, scale=1/(1 + n_seg)).
-        # Replaces a 1000-sample MC mean with its closed-form expectation.
-        x[s : e + 1] = pg_posterior_mean_analytic(seg, alpha=a, beta=1.0)
-    return np.log(np.maximum(x, 1e-12))
-
-
 def segment_cells(
     fttmat: NDArray[np.floating],
     clu: NDArray[np.integer],
@@ -77,7 +60,7 @@ def segment_cells(
     mc: int = 1000,
     n_jobs: int = 1,
 ) -> tuple[NDArray[np.float64], list[int]]:
-    """Per-cell MCMC segmentation with cluster-union breakpoints.
+    """Per-cell analytic Poisson-Gamma segmentation with cluster-union breaks.
 
     Parameters
     ----------
@@ -90,11 +73,14 @@ def segment_cells(
     ks_cut
         KS statistic threshold for calling a breakpoint.
     seed
-        Base seed; per-cell seeds are ``seed + cell_index``.
+        Base seed for KS breakpoint detection on the consensus signals.
     mc
-        Posterior samples per segment in the mean estimate.
+        Posterior samples per window in the KS-breakpoint step.
+        (Not used for segment means — those are closed-form.)
     n_jobs
-        Parallel workers (joblib ``prefer="threads"``).
+        Unused; kept for backwards-compatible signature. The vectorized
+        segmentation runs in a single NumPy call, so per-cell parallelism
+        is not needed here.
 
     Returns
     -------
@@ -102,13 +88,32 @@ def segment_cells(
         ``logCNA`` is ``(n_genes, n_cells)`` piecewise-constant log-expression.
         ``BR`` is the sorted shared breakpoint list.
     """
+    del n_jobs  # kept for API compat; vectorized path has no per-cell loop
     consensus = _consensus_per_cluster(fttmat, clu)
     BR = _union_breaks(consensus, bins=bins, ks_cut=ks_cut, seed=seed, mc=mc)
 
     raw = np.exp(np.asarray(fttmat, dtype=np.float64))
-    cols = Parallel(n_jobs=n_jobs, prefer="threads")(
-        delayed(_segment_one_cell)(raw[:, j], BR, seed + j, mc)
-        for j in range(raw.shape[1])
-    )
-    logCNA = np.column_stack(cols).astype(np.float64)
+    n_genes = raw.shape[0]
+
+    # Segment index construction (shared across all cells).
+    # _segment_one_cell semantics (now removed): seg 0 covers [BR[0], BR[1]]
+    # inclusive; seg i>=1 covers [BR[i]+1, BR[i+1]] inclusive. Equivalently,
+    # seg_starts = [BR[0], BR[1]+1, ..., BR[K-2]+1]; each segment ends at
+    # the next start minus one, or at n_genes for the last segment.
+    br = np.asarray(BR, dtype=np.int64)
+    seg_starts = np.concatenate(([br[0]], br[1:-1] + 1))  # length K-1
+    assert seg_starts.size == len(BR) - 1
+
+    seg_lens = np.diff(
+        np.concatenate([seg_starts, [n_genes]])
+    ).astype(np.float64)
+    assert int(seg_lens.sum()) == n_genes
+
+    seg_sums = np.add.reduceat(raw, seg_starts, axis=0)  # (n_seg, n_cells)
+    seg_means = seg_sums / seg_lens[:, None]
+    a = np.maximum(seg_means, 1e-3)
+    post_mean = (a + seg_sums) / (1.0 + seg_lens[:, None])  # (n_seg, n_cells)
+
+    seg_ids = np.repeat(np.arange(seg_starts.size), seg_lens.astype(np.int64))
+    logCNA = np.log(np.maximum(post_mean[seg_ids], 1e-12))
     return logCNA, BR
