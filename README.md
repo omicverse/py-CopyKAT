@@ -136,10 +136,12 @@ against R copykat using **omicverse** for visualisation (Venn / confusion
 matrix / UMAP overlay / per-cluster aneuploid fraction / bin-level CNA
 agreement / side-by-side and Δ heatmaps):
 
-| Notebook | Sample | Mode | Demonstrates |
+| Notebook | Sample(s) | Mode | Demonstrates |
 |---|---|---|---|
 | `examples/compare_py_vs_R.ipynb` | `exp.rawdata` (302 cells) | runs both implementations inline | clean parity case (ARI = 1.000, per-cell CNA Pearson median 0.97) |
-| `examples/compare_py_vs_R_realdata.ipynb` | Lee2020/SMC16 (2,695 cells) | reads cached outputs from `benchmarks/full/Lee2020_Colorectal/SMC16/{r_out,py_out}/` | the documented [parity gap](benchmarks/full/FINDINGS.md): per-cell CNA Pearson median 0.47 with shared chromosome-arm structure, but the binary aneuploid call flips (R 83% / py 34% diploid) |
+| `examples/compare_py_vs_R_realdata.ipynb` | Gao/TNBC1 (1,097), Kim/P0019 (2,945), Qian/11 (6,972) — three cancers | reads cached outputs from `benchmarks/full/<cancer>/<sample>/{r_out,py_out}/` | three high-ARI samples with a 1k → 7k cell-count ladder: classification ARI 0.994 – 1.000, per-cell CNA Pearson median 0.85 – 0.97, **end-to-end speedup 23.5× / 46.8× / 82.4×** vs R copykat on 8 cores |
+
+The Lee2020/SMC16 outlier (ARI = 0.342) is documented separately at [`benchmarks/full/FINDINGS.md → Known parity gap`](benchmarks/full/FINDINGS.md). It is intentionally not used as a demo — the realdata notebook focuses on matched samples to showcase the speedup story.
 
 ### Running them
 
@@ -160,7 +162,7 @@ PYCOPYKAT_KERNEL=<kernel-name> python examples/_build_notebooks.py
 
 ```bash
 python examples/_build_notebooks.py compare              # exp.rawdata only
-python examples/_build_notebooks.py compare-realdata     # SMC16 only
+python examples/_build_notebooks.py compare-realdata     # 3-sample real-tumour sweep
 python examples/_build_notebooks.py --no-execute         # rebuild .ipynb without running
 ```
 
