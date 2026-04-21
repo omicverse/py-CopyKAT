@@ -74,6 +74,10 @@ Python-side additions and do **not** need an R cross-reference:
 - `pycopykat.validation.{compare_predictions, compare_cna, run_r_copykat}`
 - `pycopykat.kernels.{pdist_euclidean, pdist_pearson, pdist_spearman, kalman_smooth, ...}`
 - `pycopykat.cli.app` (typer CLI)
+- `pycopykat.viz.{plot_cna_heatmap_compare, plot_cna_delta}` — pycopykat-vs-R
+  side-by-side and difference heatmaps used by
+  `examples/compare_py_vs_R*.ipynb`. No R upstream equivalent — copykat
+  ships only a single-method `heatmap.3` wrapper.
 
 These reflect pycopykat's testing / validation / performance concerns
 and don't map to R NAMESPACE by design.

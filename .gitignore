@@ -22,6 +22,12 @@ build/
 !data/**/*.rda
 scratch/
 tmp/
+docs/
+
+# compare notebook working dir (counts.tsv, r_out/, etc.)
+/examples/_compare_out_*/
+# omicverse.pl.venn writes Intersections_*.txt as a side effect of drawing
+/examples/Intersections_*.txt
 
 # ---------------------------------------------------------------------------
 # Raw / sliced datasets (large, regenerable from upstream papers)

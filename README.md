@@ -129,6 +129,68 @@ uv run pytest tests/test_r_parity.py -v
 
 `tests/r_reference.R` runs R copykat on the `exp.rawdata` fixture bundled with the upstream package and writes `tests/r_out/*.tsv`. The Python-side test skips cleanly when those TSVs are absent.
 
+## py↔R comparison notebooks
+
+Two end-to-end notebooks under `examples/` drive a side-by-side comparison
+against R copykat using **omicverse** for visualisation (Venn / confusion
+matrix / UMAP overlay / per-cluster aneuploid fraction / bin-level CNA
+agreement / side-by-side and Δ heatmaps):
+
+| Notebook | Sample | Mode | Demonstrates |
+|---|---|---|---|
+| `examples/compare_py_vs_R.ipynb` | `exp.rawdata` (302 cells) | runs both implementations inline | clean parity case (ARI = 1.000, per-cell CNA Pearson median 0.97) |
+| `examples/compare_py_vs_R_realdata.ipynb` | Lee2020/SMC16 (2,695 cells) | reads cached outputs from `benchmarks/full/Lee2020_Colorectal/SMC16/{r_out,py_out}/` | the documented [parity gap](benchmarks/full/FINDINGS.md): per-cell CNA Pearson median 0.47 with shared chromosome-arm structure, but the binary aneuploid call flips (R 83% / py 34% diploid) |
+
+### Running them
+
+The compare notebooks need `omicverse + matplotlib_venn + pyreadr + pycopykat`
+in the same Python environment with a registered Jupyter kernel. The
+project ships an `examples` extras group:
+
+```bash
+# in a conda env that you'll register as a Jupyter kernel
+pip install -e ".[examples]"
+python -m ipykernel install --user --name <kernel-name>
+
+# generate + execute (kernel name overridable; defaults to `omicverse`)
+PYCOPYKAT_KERNEL=<kernel-name> python examples/_build_notebooks.py
+```
+
+`examples/_build_notebooks.py` accepts target subsets:
+
+```bash
+python examples/_build_notebooks.py compare              # exp.rawdata only
+python examples/_build_notebooks.py compare-realdata     # SMC16 only
+python examples/_build_notebooks.py --no-execute         # rebuild .ipynb without running
+```
+
+### R driver for the inline notebook
+
+`examples/r_driver_compare.R` is a thin wrapper that calls `copykat()`
+on a counts TSV and emits stable filenames (`prediction.tsv`,
+`cna.tsv`, `runinfo.txt`) so the Python notebook can read deterministic
+paths regardless of `sam.name`. The 17-patient benchmark uses a
+different driver (`scripts/run_r_copykat.R`) — both are kept because
+`scripts/run_r_copykat.R` writes copykat's full diagnostic file set
+under standard names that `compare_py_vs_R_realdata.ipynb` reads
+directly.
+
+### Side-by-side CNA heatmap API
+
+The two notebooks share `pycopykat.viz` helpers:
+
+```python
+from pycopykat.viz import plot_cna_heatmap_compare, plot_cna_delta
+
+ax_py, ax_r = plot_cna_heatmap_compare(
+    py_cna, r_cna, py_prediction, r_prediction, sort_by="py"
+)
+ax = plot_cna_delta(py_cna, r_cna, py_prediction)
+```
+
+Both accept `ax=` for inline notebook use; both expect `(n_bins, n_cells)`
+DataFrames with a shared bin index and intersected cell columns.
+
 ## Reproducing the 17-patient benchmark
 
 The sweep in `benchmarks/full/` is driven by:

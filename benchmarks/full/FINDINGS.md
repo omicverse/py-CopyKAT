@@ -65,12 +65,17 @@ label polarity (ARI = 0.342, κ = −0.326, FMI = 0.759).
 | label suffix | clean `diploid` / `aneuploid` | all cells tagged `c{1,2}:…:low.conf` |
 | runinfo warnings | — | `unclassified.prediction; unclassified.prediction` |
 
-**What is consistent.** The bin-level CNA matrix is in close agreement
-between the two runs — the pre-classification stages (filtering, VST +
-Kalman smoothing, per-cell segmentation, bin aggregation) behave the
-same on this sample. Evidence and figures: see
-`examples/compare_py_vs_R_realdata.ipynb` for the bin-level Pearson /
-Spearman comparison and the py-vs-R heatmap / Δ-heatmap on SMC16.
+**What is consistent.** The CNA matrices share their major chromosome-arm
+structure (visual side-by-side heatmap in
+`examples/compare_py_vs_R_realdata.ipynb`); per-cell bin-vector Pearson
+is moderate (median ≈ 0.47, n = 2,695 cells) — not bit-identical, but
+well above zero and far above what a misaligned baseline would produce.
+Pre-classification stages (filtering, VST + Kalman smoothing,
+segmentation, bin aggregation) therefore agree on chromosome-level
+copy-number direction; the disagreement is concentrated at the
+classifier, not at CNA estimation. Compare against `exp.rawdata`, where
+the same per-cell Pearson is median 0.97 — the pipeline can reach near-
+identical CNA agreement when the baseline-fallback chain does not fire.
 
 **Where the divergence lives.** Both sides take the same fallback
 branch:
