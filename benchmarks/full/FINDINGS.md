@@ -50,6 +50,74 @@ the baseline, which is a known limitation of the copykat algorithm
 (Gao et al., *Nat Biotechnol* 2021), not an implementation defect
 of either pycopykat or R copykat.
 
+### Known parity gap: Lee2020_Colorectal / SMC16
+
+This is the only sample in the 17-patient sweep where the two
+implementations disagree on the majority-class split, not just on
+label polarity (ARI = 0.342, κ = −0.326, FMI = 0.759).
+
+**What the outputs look like.**
+
+| | R copykat | pycopykat |
+|---|---|---|
+| diploid | 2235 (83%) | 909 (34%) |
+| aneuploid | 460 (17%) | 1786 (66%) |
+| label suffix | clean `diploid` / `aneuploid` | all cells tagged `c{1,2}:…:low.conf` |
+| runinfo warnings | — | `unclassified.prediction; unclassified.prediction` |
+
+**What is consistent.** The bin-level CNA matrix is in close agreement
+between the two runs — the pre-classification stages (filtering, VST +
+Kalman smoothing, per-cell segmentation, bin aggregation) behave the
+same on this sample. Evidence and figures: see
+`examples/compare_py_vs_R_realdata.ipynb` for the bin-level Pearson /
+Spearman comparison and the py-vs-R heatmap / Δ-heatmap on SMC16.
+
+**Where the divergence lives.** Both sides take the same fallback
+branch:
+
+```
+baseline_norm_cl  ──low confidence──►  baseline_gmm  ──low confidence──►  label suffix "low.conf"
+```
+
+R copykat retains clean `diploid` / `aneuploid` labels after this
+chain; pycopykat tags every cell `c1:diploid:low.conf` /
+`c2:aneuploid:low.conf` (`pipeline.py:282-287`). The label-suffix
+difference is cosmetic. The quantitative gap — 83% vs 34% diploid — is
+not: it means the majority class itself flipped, so one of the two
+pipelines has chosen a different baseline vector or a different
+`predict_ploidy` split on this sample.
+
+**Root cause: not yet localised.** The fallback chain in
+`pipeline.py:157-170` mirrors R's `copykat.R:165-176` structurally
+(`baseline.norm.cl` → `baseline.GMM` with `RE.before`). The divergence
+must therefore sit in either:
+
+1. the diploid set `preN` emitted by `baseline_gmm` when fewer than
+   three "normal-looking" cells are recovered (R returns `RE.before`;
+   py passes `fallback=br` — verify identity),
+2. the resulting baseline vector `basel`, or
+3. the downstream `predict_ploidy` cut when the baseline is near-noise.
+
+This is tracked separately at `TODO_parity_SMC16.md` rather than
+investigated inline — reaching a defensible fix requires dumping py
+and R intermediate states (`basel`, `preN`, `predict_ploidy` linkage)
+on this sample and comparing them. Patching any of the three
+candidates blindly would risk regressing the 16 other patients where
+pycopykat already matches R at ARI ≥ 0.92.
+
+**Consequence for users.** On SMC16-type samples where pycopykat emits
+`unclassified.prediction` twice and tags every cell `*:low.conf`, the
+per-cell polarity should be treated as unreliable — the label suffix
+is a correct "not confident" signal from the algorithm, independent
+of the direction of the disagreement with R. The other 16 samples in
+this benchmark do not exhibit this behaviour.
+
+**Benchmark policy.** SMC16 is retained in `py_vs_r_summary.csv`,
+`mechanism_summary.csv`, `overview.cancer_summary.csv` and the
+aggregate `overview.png`. Excluding it would hide the one case in the
+sweep that exposes this fallback-branch disagreement, which would
+weaken rather than strengthen the parity reporting.
+
 ## Per-patient table
 
 See `mechanism_summary.csv` for the per-patient breakdown (cancer,
