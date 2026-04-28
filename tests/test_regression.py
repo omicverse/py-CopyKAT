@@ -26,7 +26,7 @@ from pycopykat.validation.metrics import compare_cna, compare_predictions
 from pycopykat.validation.r_runner import load_r_cna, load_r_prediction, run_r_copykat
 
 
-REF_RDA = Path("/media/jason/T7/rerbulid/copykat-R/data/exp.rawdata.rda")
+REF_RDA = Path("/media/jason/T7/rebuild/copykat-R/data/exp.rawdata.rda")
 
 
 @pytest.mark.slow

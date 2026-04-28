@@ -14,6 +14,13 @@ import pandas as pd
 _DEFAULT_DRIVER = Path(__file__).resolve().parents[2] / "scripts" / "run_r_copykat.R"
 
 
+def _drop_unnamed_first_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop a leading unnamed index column emitted by some TSV writers."""
+    if df.shape[1] > 0 and str(df.columns[0]).strip().lower().startswith("unnamed"):
+        return df.iloc[:, 1:].copy()
+    return df
+
+
 def run_r_copykat(
     mat: pd.DataFrame,
     out_dir: Path,
@@ -53,17 +60,23 @@ def run_r_copykat(
 def load_r_prediction(out_dir: Path, sam_name: str) -> pd.DataFrame:
     """Load the R copykat prediction file (cell × copykat.pred)."""
     path = Path(out_dir) / f"{sam_name}_copykat_prediction.txt"
-    df = pd.read_csv(path, sep="\t")
+    df = _drop_unnamed_first_column(pd.read_csv(path, sep="\t"))
     if df.shape[1] != 2:
         raise ValueError(f"expected 2 cols in {path}, got {df.shape[1]}")
-    df.columns = ["cell", "copykat.pred"]
+    if "cell.names" in df.columns:
+        df = df.rename(columns={"cell.names": "cell"})
+    elif "cell" not in df.columns:
+        df = df.rename(columns={df.columns[0]: "cell"})
+    if "copykat.pred" not in df.columns:
+        df = df.rename(columns={df.columns[1]: "copykat.pred"})
+    df = df[["cell", "copykat.pred"]]
     return df
 
 
 def load_r_cna(out_dir: Path, sam_name: str) -> pd.DataFrame:
     """Load the R copykat CNA results file with (chrom, chrompos, abspos) as index."""
     path = Path(out_dir) / f"{sam_name}_copykat_CNA_results.txt"
-    df = pd.read_csv(path, sep="\t")
+    df = _drop_unnamed_first_column(pd.read_csv(path, sep="\t"))
     # R writes first 3 cols = chrom, chrompos, abspos; remainder = cells
     meta = df.columns[:3].tolist()
     df = df.set_index(meta)

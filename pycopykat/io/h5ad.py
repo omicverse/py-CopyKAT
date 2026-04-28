@@ -204,7 +204,7 @@ def copykat_by_batch(
     batch_series = ad.obs[batch_key].astype(str)
 
     # Pre-allocate CNA matrix using the shared hg20 bin table; every batch
-    # returns the same (n_bins, n_cells) shape so we can fold batches into
+    # returns CNA as (n_cells_in_batch, n_bins) so we can fold batches into
     # one obsm array without alignment pain.
     bins_df = load_hg20_bins()
     bins_retained = bins_df.loc[bins_df["chrom"] != 24].reset_index(drop=True).copy()
