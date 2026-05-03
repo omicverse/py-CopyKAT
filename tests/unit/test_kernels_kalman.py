@@ -2,6 +2,7 @@
 import subprocess
 
 import numpy as np
+import pytest
 
 from pycopykat.kernels.kalman import kalman_smooth, kalman_smooth_matrix
 
@@ -13,6 +14,28 @@ def _simulate(n=200, dW=0.001, dV=0.16, seed=0):
     x = np.cumsum(r.normal(0, np.sqrt(dW), size=n))
     y = x + r.normal(0, np.sqrt(dV), size=n)
     return y
+
+
+def _require_r_package(package: str) -> None:
+    try:
+        result = subprocess.run(
+            [
+                "Rscript",
+                "-e",
+                f'if (!requireNamespace("{package}", quietly=TRUE)) quit(status=42)',
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        pytest.skip("Rscript not available")
+
+    if result.returncode == 42:
+        pytest.skip(f"R package {package!r} not installed")
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout).strip()
+        pytest.skip(f"R package check failed for {package!r}: {msg}")
 
 
 def test_smoother_shape():
@@ -30,6 +53,7 @@ def test_smoother_reduces_variance():
 
 def test_matches_r_dlm_smooth(tmp_path):
     """Bit-close match to dlm::dlmSmooth on same input."""
+    _require_r_package("dlm")
     y = _simulate(n=50, seed=42)
     rscript = tmp_path / "run.R"
     ypath = tmp_path / "y.txt"
