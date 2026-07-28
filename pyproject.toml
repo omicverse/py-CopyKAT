@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pycopykat"
-version = "0.1.0.dev1"
+version = "0.1.0.dev2"
 description = "A pure-Python re-implementation of CopyKAT (Gao et al., Nat Biotechnol 2021) — aneuploid / diploid classification and bin-level CNA calling from scRNA-seq counts. Drop-in for the scanpy / AnnData ecosystem."
 readme = "README.md"
 license = "GPL-2.0-or-later"

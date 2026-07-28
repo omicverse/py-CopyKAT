@@ -1,7 +1,8 @@
 """Gene annotation loaders (hg20 / mm10) and annotate_genes helpers.
 
-Wraps the parquet reference files shipped under ``data/`` (generated from
-copykat's ``sysdata.rda`` by ``scripts/convert_sysdata.R``). For hg20, HLA-
+Wraps the parquet reference files shipped inside the package under
+``pycopykat/data/`` (generated from copykat's ``sysdata.rda`` by
+``scripts/convert_sysdata.R``). For hg20, HLA-
 and cell-cycle genes are removed during :func:`annotate_genes` to match R
 copykat behaviour (copykat.R lines ~70-82). For mm10 the upstream R
 implementation skips those filters and reuses the hg20 220 kb bin table;
@@ -27,15 +28,27 @@ _GENOME_SYMBOL_COL = {
 _SUPPORTED_GENOMES = tuple(_GENOME_SYMBOL_COL)
 
 
-def _data_dir() -> Path:
-    """Return the project-level ``data/`` directory.
+#: Reference tables live inside the package (``pycopykat/data/``) so a wheel
+#: install carries them. Up to 0.1.0.dev1 they sat at the repo root and were
+#: resolved as ``parents[2] / "data"``, which only ever worked from a source
+#: checkout — from ``site-packages`` that points at ``site-packages/data/``.
+_PACKAGE_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+_LEGACY_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
-    Resolution assumes the installed layout ``<root>/pycopykat/io/annotation.py``
-    so that ``parents[2]`` is the project root. With ``pip install -e .`` this
-    works; for a wheel install the same parquet files should be shipped via
-    package data — V1 sticks with the editable layout.
-    """
-    return Path(__file__).resolve().parents[2] / "data"
+
+def _data_dir() -> Path:
+    """Return the directory holding the packaged reference tables."""
+    if _PACKAGE_DATA_DIR.is_dir():
+        return _PACKAGE_DATA_DIR
+    if _LEGACY_DATA_DIR.is_dir():
+        # Pre-0.1 source checkout with the tables still at the repo root.
+        return _LEGACY_DATA_DIR
+    raise FileNotFoundError(
+        f"pycopykat reference data not found at {_PACKAGE_DATA_DIR}. The "
+        "parquet/text tables ship inside the package; an installation that "
+        "predates that move is missing them. Reinstall with:\n"
+        "    pip install -U 'pycopykat @ git+https://github.com/omicverse/py-CopyKAT.git'"
+    )
 
 
 def load_hg20_annotation() -> pd.DataFrame:
