@@ -1,10 +1,27 @@
 """Smoke tests for reference parquet / text files generated from copykat
 sysdata.rda (see scripts/convert_sysdata.R for the canonical schema)."""
 from pathlib import Path
+
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
+import pycopykat
+from pycopykat.io.annotation import _data_dir
+
+DATA = _data_dir()
+
+
+def test_data_dir_lives_inside_the_package():
+    """Reference tables must resolve from the installed package, not the repo root.
+
+    Resolving them as ``<parents[2]>/data`` pointed at ``site-packages/data``
+    for a non-editable install, so every genome lookup died with
+    ``FileNotFoundError: .../site-packages/data/hg20_gene_anno.parquet``
+    (omicverse#903).
+    """
+    pkg_dir = Path(pycopykat.__file__).resolve().parent
+    assert pkg_dir / "data" == DATA
+    assert DATA.is_dir()
+
 
 def test_hg20_gene_anno_parquet_exists():
     df = pd.read_parquet(DATA / "hg20_gene_anno.parquet")

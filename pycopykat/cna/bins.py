@@ -1,6 +1,6 @@
 """Gene-level → 220 kb genomic bin aggregation (R ``convert.all.bins.hg20``).
 
-The shipped bin table (``data/hg20_220kb_bins.parquet``) stores a single
+The shipped bin table (``pycopykat/data/hg20_220kb_bins.parquet``) stores a single
 ``chrompos`` per bin representing the bin's *end* coordinate (within its
 chromosome). The bin's start is the previous bin's ``chrompos`` on the same
 chromosome; first bin on each chromosome starts at 0. For every bin we take

@@ -1,7 +1,8 @@
 #!/usr/bin/env Rscript
 # Convert copykat sysdata.rda → parquet for pycopykat.
 # Inputs: SYSDATA_PATH env var (falls back to /media/jason/T7/rerbulid/copykat-R/data/sysdata.rda).
-# Outputs: written to data/ under the pycopykat repo root (resolved via this script's own location).
+# Outputs: written to pycopykat/data/ inside the package (resolved via this script's own location),
+#          so a wheel / non-editable install carries them too.
 
 if (!requireNamespace("arrow", quietly = TRUE)) {
   stop("R package 'arrow' is required. Install with: install.packages('arrow')")
@@ -38,7 +39,7 @@ if (!file.exists(sysdata_path)) {
 }
 load(sysdata_path)
 
-data_dir <- file.path(project_root, "data")
+data_dir <- file.path(project_root, "pycopykat", "data")
 dir.create(data_dir, showWarnings = FALSE, recursive = TRUE)
 
 stopifnot(exists("full.anno"))
