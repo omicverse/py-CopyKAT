@@ -79,7 +79,7 @@ jobs:
           if-no-files-found: error
 
   lint:
-    # Informational only — ruff has ~190 pre-existing findings; this job
+    # Informational only — ruff has pre-existing findings; this job
     # surfaces them without blocking merges. Clean up incrementally and
     # flip `continue-on-error` off once the baseline is green.
     name: ruff (non-blocking)
@@ -97,4 +97,4 @@ jobs:
       - name: Sync project (dev extras)
         run: uv sync --extra dev
       - name: ruff check
-        run: uv run ruff check src tests
+        run: uv run ruff check pycopykat tests

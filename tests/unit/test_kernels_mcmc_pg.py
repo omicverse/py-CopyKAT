@@ -1,9 +1,32 @@
 import subprocess
 
 import numpy as np
+import pytest
 from scipy.stats import ks_2samp
 
 from pycopykat.kernels.mcmc_pg import pg_posterior_mean, pg_posterior_samples
+
+
+def _require_r_package(package: str) -> None:
+    try:
+        result = subprocess.run(
+            [
+                "Rscript",
+                "-e",
+                f'if (!requireNamespace("{package}", quietly=TRUE)) quit(status=42)',
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        pytest.skip("Rscript not available")
+
+    if result.returncode == 42:
+        pytest.skip(f"R package {package!r} not installed")
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout).strip()
+        pytest.skip(f"R package check failed for {package!r}: {msg}")
 
 
 def test_posterior_samples_shape():
@@ -16,6 +39,7 @@ def test_posterior_samples_shape():
 
 
 def test_matches_mcmcpack(tmp_path):
+    _require_r_package("MCMCpack")
     rng = np.random.default_rng(42)
     y = rng.poisson(5.0, size=40).astype(np.float64)
     np.savetxt(tmp_path / "y.txt", y)
