@@ -35,7 +35,7 @@ from pycopykat import CopykatConfig, copykat
 HERE = Path(__file__).parent
 R_OUT = HERE / "r_out"
 
-REF_RDA = Path("/media/jason/T7/rerbulid/copykat-R/data/exp.rawdata.rda")
+REF_RDA = Path("/media/jason/T7/rebuild/copykat-R/data/exp.rawdata.rda")
 
 PRED_TSV = R_OUT / "exp_rawdata_prediction.tsv"
 META_TSV = R_OUT / "exp_rawdata_meta.tsv"
