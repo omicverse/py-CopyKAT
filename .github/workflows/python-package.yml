@@ -35,7 +35,8 @@ jobs:
         # tests/test_regression.py is marked `slow` (needs R copykat) and
         # is excluded by the default pyproject addopts ("-m 'not slow'").
         # tests/test_r_parity.py skips cleanly when tests/r_out/ is absent
-        # (no R installed in CI).
+        # (no R installed in CI), and the two Rscript-backed kernel parity
+        # tests skip via the `require_r_package` fixture (tests/conftest.py).
         run: uv run pytest tests/unit tests/test_smoke.py tests/test_r_parity.py -v
 
   build:
@@ -97,4 +98,4 @@ jobs:
       - name: Sync project (dev extras)
         run: uv sync --extra dev
       - name: ruff check
-        run: uv run ruff check src tests
+        run: uv run ruff check pycopykat tests

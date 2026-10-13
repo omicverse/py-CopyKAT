@@ -15,7 +15,8 @@ def test_posterior_samples_shape():
     assert abs(samp.mean() - expected) < 0.5
 
 
-def test_matches_mcmcpack(tmp_path):
+def test_matches_mcmcpack(tmp_path, require_r_package):
+    require_r_package("MCMCpack")
     rng = np.random.default_rng(42)
     y = rng.poisson(5.0, size=40).astype(np.float64)
     np.savetxt(tmp_path / "y.txt", y)
