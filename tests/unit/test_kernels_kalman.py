@@ -28,8 +28,9 @@ def test_smoother_reduces_variance():
     assert np.var(np.diff(s)) < np.var(np.diff(y)) * 0.5
 
 
-def test_matches_r_dlm_smooth(tmp_path):
+def test_matches_r_dlm_smooth(tmp_path, require_r_package):
     """Bit-close match to dlm::dlmSmooth on same input."""
+    require_r_package("dlm")
     y = _simulate(n=50, seed=42)
     rscript = tmp_path / "run.R"
     ypath = tmp_path / "y.txt"
