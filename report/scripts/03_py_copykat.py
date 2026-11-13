@@ -48,7 +48,9 @@ def main():
     (od / "preN.txt").write_text("\n".join(res.preN) + "\n")
     (od / "result.json").write_text(json.dumps({
         "engine": "pycopykat", "version": pycopykat.__version__, "n_jobs": nj, "mode": mode,
-        "seconds": el, "cells": int(cna.shape[1]), "WNS": res.WNS, "WNS1": res.WNS1}))
+        "seconds": el, "cells": int(cna.shape[1]), "WNS": res.WNS, "WNS1": res.WNS1,
+        "classification": {k: v for k, v in res.intermediate.get("classification", {}).items() if k != "clusters"},
+        "baseline": {k: np.asarray(v).tolist() for k, v in res.intermediate.get("baseline", {}).items()}}))
     print(td.name, mode, f"{cna.shape[1]} cells, {el:.1f} s, {nj} thread(s)", flush=True)
 
 

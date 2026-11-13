@@ -2,7 +2,7 @@
 
 A Python implementation of [CopyKAT](https://github.com/navinlabcode/copykat) (Gao et al., *Nat Biotechnol* 2021): copy-number profiles of single cells in 220 kb bins and the call of each cell as aneuploid (tumour) or diploid (normal) from scRNA-seq UMI counts.
 
-**Status:** v0.2.0 — reproduces R copykat 1.2.5. With the same seed pycopykat gives R's breakpoints, R's baseline cells and R's call for every cell; the copy-number matrices agree to about 1e-10. On six breast tumours of the CopyKAT paper it ran 3.5 to 14 times faster than R on one thread. See *Reproducing R* below and [`report/`](report/).
+**Status:** v0.2.0 — reproduces R copykat 1.2.5. With the same seed pycopykat gives R's breakpoints, R's baseline cells and R's call for every cell; the copy-number matrices agree to about 1e-10. On six breast tumours of the CopyKAT paper it ran 4.7 to 17 times faster than R on one thread. See *Reproducing R* below and [`report/`](report/).
 
 ## Installation
 
@@ -55,14 +55,18 @@ R copykat with `n.cores > 1` does not repeat its own results (`mclapply` childre
 
 Comparison with R copykat 1.2.5 (same seed, `n.cores = 1`):
 
-| sample (GSE148673) | cells | breakpoints | calls identical | max \|ΔCNA\| | pycopykat (s) | R (s) |
+| sample (GSE148673) | cells | breakpoints | calls identical | max \|ΔCNA\| | pycopykat, 1 thread (s) | R (s) |
 |---|---|---|---|---|---|---|
-| DCIS1 | 1,480 | 231 = 231 | yes | 4.3e-11 | see report | 728 |
-| TNBC1 | 1,097 | 291 = 291 | yes | 5.2e-11 | | 488 |
-| TNBC2 | 1,034 | 267 = 267 | yes | 5.5e-11 | | 439 |
-| TNBC3 | 532 | 326 = 326 | yes | 5.3e-11 | | 222 |
-| TNBC4 | 3,056 | 252 = 252 | yes | 6.2e-11 | | 2,449 |
-| TNBC5 | 3,225 | 219 = 219 | yes | 1.3e-11 | | 2,703 |
+| DCIS1 | 1,480 | 231 = 231 | yes | 4.3e-11 | 80 | 730 |
+| TNBC1 | 1,097 | 291 = 291 | yes | 5.2e-11 | 72 | 496 |
+| TNBC2 | 1,034 | 267 = 267 | yes | 5.5e-11 | 62 | 437 |
+| TNBC3 | 532 | 326 = 326 | yes | 5.3e-11 | 46 | 220 |
+| TNBC4 | 3,056 | 252 = 252 | yes | 6.2e-11 | 177 | 2,478 |
+| TNBC5 | 3,225 | 219 = 219 | yes | 1.3e-11 | 165 | 2,759 |
+
+Times are the faster of two runs, each on one idle core ([`report/`](report/)). Most of the time goes to the
+segmentation's gamma draws, which come from one sequential random stream; more threads (`n_jobs`) speed up
+only the other steps.
 
 The known-normal, cell-line and Pearson-distance modes were checked the same way on TNBC3. `tests/test_parity.py` checks copykat's example data (`exp.rawdata`) against stored R results, and `tests/test_rcompat.py` the R pieces against stored R values; `tests/r_reference.R` and `tests/r_components.R` regenerate them.
 

@@ -518,8 +518,9 @@ def run(counts, genes, cells, *, id_type="S", cell_line=False, ngene_chr=5, min_
         return CopykatRun(prediction=None, cna=cna, hclustering=tree, cells=relat_cells, WNS1=WNS1,
                           WNS=WNS, preN=[], intermediate=inter)
     log.info("step 7: re-adjust baseline")
-    pred, mat_adj, tree = _predict(uber, results_com, relat_cells, preN, distance, WNS,
-                                   strict=(genome != "hg20"))
+    pred, mat_adj, tree, pinfo = _predict(uber, results_com, relat_cells, preN, distance, WNS,
+                                          strict=(genome != "hg20"))
+    inter["classification"] = pinfo
     ndef = [c for c in raw_cells if c not in set(relat_cells)]
     res = pd.DataFrame({"cell.names": list(relat_cells) + ndef,
                         "copykat.pred": list(pred) + ["not.defined"] * len(ndef)})
@@ -540,7 +541,8 @@ def _predict(uber, results_com, cells, preN, distance, WNS, strict):
                          for i in range(1, int(cut.max()) + 1)])
 
     tree = hclust(_cluster_dist(uber, distance), "ward.D")
-    hc_short = tree.cutree(_final_k(tree))
+    k_short = _final_k(tree)
+    hc_short = tree.cutree(k_short)
     ids = cl_id(hc_short)
     dip = np.isin(hc_short, np.flatnonzero(ids == ids.max()) + 1)
     rat = uber - r_means(uber[:, dip], axis=1)[:, None]
@@ -552,7 +554,8 @@ def _predict(uber, results_com, cells, preN, distance, WNS, strict):
     adj = np.where(np.abs(rat - base[:, None]) <= (0.25 * cf_h)[:, None], colmean[None, :], rat)
     mat_adj = adj - r_means(adj, axis=0)[None, :]
     tree = hclust(_cluster_dist(mat_adj, distance), "ward.D")
-    hc = tree.cutree(_final_k(tree))
+    k_final = _final_k(tree)
+    hc = tree.cutree(k_final)
     ids = cl_id(hc)
     cl_dip = np.flatnonzero(ids == ids.max()) + 1
     cl_ane = np.flatnonzero(ids == ids.min()) + 1
@@ -569,10 +572,11 @@ def _predict(uber, results_com, cells, preN, distance, WNS, strict):
             w_dip = r_means(np.abs(sd_dip - cons)[:, None], 0)[0]
             w_ane = r_means(np.abs(sd_ane - cons)[:, None], 0)[0]
             pred[hc == i] = "diploid" if w_dip < w_ane else "aneuploid"
+    info = dict(k_first=k_short, k_final=k_final, cl_id=ids.tolist(), cor=r, clusters=hc)
     if WNS == "unclassified.prediction":
         pred = np.where(pred == "diploid", "c1:diploid:low.conf",
                         np.where(pred == "aneuploid", "c2:aneuploid:low.conf", pred))
-    return pred, mat_adj, tree
+    return pred, mat_adj, tree, info
 
 
 def annotate(genes: np.ndarray, id_type: str, genome: str) -> tuple[pd.DataFrame, np.ndarray]:
