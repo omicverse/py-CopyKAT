@@ -43,7 +43,6 @@ class _SparseBatch:
         return (int(self.X.shape[0]), int(self.X.shape[1]))
 
 _PRED_COL = "copykat_pred"
-_SUBCLONE_COL = "copykat_subclone"
 _BATCH_COL = "copykat_batch"
 _WARN_COL = "copykat_warnings"
 _CNA_KEY = "copykat_cna"
@@ -100,11 +99,8 @@ def _run_one_batch(
         norm_cell_names=config.norm_cell_names,
         sam_name=f"{config.sam_name}_{batch_label}" if config.sam_name else batch_label,
         output_dir=config.output_dir,
-        output_seg=False,
-        plot_genes=False,
         n_jobs=config.n_jobs,
         seed=config.seed,
-        backend=config.backend,
     )
     if isinstance(counts, _SparseBatch):
         res = _copykat_from_sparse(
@@ -119,7 +115,6 @@ def _run_one_batch(
         "batch": batch_label,
         "prediction": res.prediction,
         "cna_mat": res.cna_mat,
-        "subclone": res.subclone,
         "warnings": res.warnings,
         "elapsed_min": elapsed_min,
         "n_cells_in": n_cells_in,
@@ -179,7 +174,6 @@ def copykat_by_batch(
         With the following additions:
 
         - ``obs[copykat_pred]``       — "diploid" / "aneuploid" / "not.defined"
-        - ``obs[copykat_subclone]``   — integer subclone label (batch-local)
         - ``obs[copykat_batch]``      — batch label actually used
         - ``obs[copykat_warnings]``   — comma-separated warnings for that batch
         - ``obsm[copykat_cna]``       — float32 (n_cells, n_bins) CNA matrix
@@ -206,15 +200,9 @@ def copykat_by_batch(
     # Pre-allocate CNA matrix using the shared hg20 bin table; every batch
     # returns the same (n_bins, n_cells) shape so we can fold batches into
     # one obsm array without alignment pain.
+    # every hg20 batch returns the same 220 kb bins (chromosome 24 removed), in R's order
     bins_df = load_hg20_bins()
-    bins_retained = bins_df.loc[bins_df["chrom"] != 24].reset_index(drop=True).copy()
-    bins_retained["end"] = bins_retained["chrompos"]
-    bins_retained["start"] = (
-        bins_retained.groupby("chrom", sort=False)["end"]
-        .shift(1)
-        .fillna(0.0)
-        .astype(np.float64)
-    )
+    bins_retained = bins_df.loc[bins_df["chrom"] != 24, ["chrom", "chrompos", "abspos"]].reset_index(drop=True)
     n_bins = int(len(bins_retained))
     n_cells = int(ad.n_obs)
 
@@ -224,7 +212,6 @@ def copykat_by_batch(
         cna_out = None
 
     pred_out = np.array(["not.defined"] * n_cells, dtype=object)
-    subclone_out = np.full(n_cells, np.nan, dtype=np.float64)
     warn_out = np.array([""] * n_cells, dtype=object)
     batch_out = batch_series.to_numpy().astype(object)
 
@@ -277,21 +264,14 @@ def copykat_by_batch(
         pb = payload  # dict
         pred_df = pb["prediction"]  # type: ignore[assignment]
         cna_df = pb["cna_mat"]  # type: ignore[assignment]
-        subclone_s = pb["subclone"]  # type: ignore[assignment]
         warnings = pb["warnings"]  # type: ignore[assignment]
 
         # Map per-cell results back into the parent-sized arrays
-        pred_map = dict(zip(pred_df["cell"].astype(str), pred_df["copykat.pred"].astype(str)))
+        pred_map = dict(zip(pred_df["cell.names"].astype(str), pred_df["copykat.pred"].astype(str)))
         for i, name in enumerate(obs_names):
             if name in pred_map:
                 pred_out[i] = pred_map[name]
                 warn_out[i] = ", ".join(warnings) if warnings else ""
-
-        if len(subclone_s) > 0:
-            sc_map = {str(k): int(v) for k, v in subclone_s.items()}
-            for i, name in enumerate(obs_names):
-                if name in sc_map:
-                    subclone_out[i] = sc_map[name]
 
         if cna_out is not None:
             # cna_df is a bins × cells DataFrame; align columns to obs_names
@@ -307,20 +287,18 @@ def copykat_by_batch(
             "n_cells_in": int(pb["n_cells_in"]),
             "n_cells_out": int(pb["n_cells_out"]),
             "warnings": list(warnings),
-            "subclone_n": int(len(subclone_s)),
         }
 
     ad.obs[_PRED_COL] = pd.Categorical(
         pred_out,
         categories=sorted(set(pred_out.tolist()) | {"not.defined"}),
     )
-    ad.obs[_SUBCLONE_COL] = subclone_out
     ad.obs[_BATCH_COL] = pd.Categorical(batch_out)
     ad.obs[_WARN_COL] = warn_out
 
     if cna_out is not None:
         ad.obsm[_CNA_KEY] = cna_out
-        ad.uns[_BINS_KEY] = bins_retained[["chrom", "start", "end"]].reset_index(drop=True)
+        ad.uns[_BINS_KEY] = bins_retained
 
     ad.uns[_META_KEY] = per_batch_meta
     return ad

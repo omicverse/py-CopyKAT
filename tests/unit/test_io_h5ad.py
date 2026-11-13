@@ -32,7 +32,7 @@ def _fake_result_factory(batch_to_pred: dict[str, dict[str, str]]):
         cells = [c for c in mat.columns if c in pred_map]
         pred_df = pd.DataFrame(
             {
-                "cell": cells,
+                "cell.names": cells,
                 "copykat.pred": [pred_map[c] for c in cells],
             }
         )
@@ -40,21 +40,15 @@ def _fake_result_factory(batch_to_pred: dict[str, dict[str, str]]):
         cna = pd.DataFrame(
             np.full((n_bins, len(cells)), 0.1, dtype=np.float64),
             index=pd.MultiIndex.from_tuples(
-                [(1, 0, 1e5), (1, 1e5, 2e5), (2, 0, 1e5), (2, 1e5, 2e5)],
-                names=["chrom", "start", "end"],
+                [(1, 1e5, 1e5), (1, 2e5, 2e5), (2, 1e5, 3e5), (2, 2e5, 4e5)],
+                names=["chrom", "chrompos", "abspos"],
             ),
             columns=cells,
-        )
-        subclone = pd.Series(
-            [1] * sum(1 for c in cells if pred_map[c] == "aneuploid"),
-            index=[c for c in cells if pred_map[c] == "aneuploid"],
-            name="subclone",
         )
         return CopykatResult(
             cna_mat=cna,
             prediction=pred_df,
-            linkage=np.zeros((max(len(cells) - 1, 0), 4), dtype=np.float64),
-            subclone=subclone,
+            hclustering=None,
             warnings=("note: fake result",),
         )
 
@@ -91,6 +85,7 @@ def test_copykat_by_batch_merges_predictions(monkeypatch: pytest.MonkeyPatch) ->
             {
                 "chrom": [1, 1, 2, 2, 24],  # 24 is dropped by the filter
                 "chrompos": [1e5, 2e5, 1e5, 2e5, 1e5],
+                "abspos": [1e5, 2e5, 3e5, 4e5, 5e5],
             }
         ),
     )
@@ -107,12 +102,6 @@ def test_copykat_by_batch_merges_predictions(monkeypatch: pytest.MonkeyPatch) ->
     for i, c in enumerate(p2_cells):
         want = "aneuploid" if i % 2 == 0 else "diploid"
         assert out.obs.loc[c, "copykat_pred"] == want
-    # subclone labels only on aneuploid cells
-    aneu_cells = [c for i, c in enumerate(p2_cells) if i % 2 == 0]
-    for c in aneu_cells:
-        assert out.obs.loc[c, "copykat_subclone"] == 1
-    for c in p1_cells:
-        assert pd.isna(out.obs.loc[c, "copykat_subclone"])
     # obsm matrix present, shape (n_cells, n_bins_retained)
     assert "copykat_cna" in out.obsm
     assert out.obsm["copykat_cna"].shape == (ad.n_obs, 4)
@@ -133,7 +122,7 @@ def test_copykat_by_batch_skips_small_batches(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         h5ad_mod,
         "load_hg20_bins",
-        lambda: pd.DataFrame({"chrom": [1], "chrompos": [1e5]}),
+        lambda: pd.DataFrame({"chrom": [1], "chrompos": [1e5], "abspos": [1e5]}),
     )
     out = h5ad_mod.copykat_by_batch(
         ad, batch_key="patient", config=CopykatConfig(n_jobs=1), min_cells_per_batch=1000
@@ -154,7 +143,7 @@ def test_copykat_by_batch_on_error_skip(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         h5ad_mod,
         "load_hg20_bins",
-        lambda: pd.DataFrame({"chrom": [1], "chrompos": [1e5]}),
+        lambda: pd.DataFrame({"chrom": [1], "chrompos": [1e5], "abspos": [1e5]}),
     )
     out = h5ad_mod.copykat_by_batch(
         ad, batch_key="patient", config=CopykatConfig(n_jobs=1),

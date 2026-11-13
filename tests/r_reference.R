@@ -1,86 +1,29 @@
 #!/usr/bin/env Rscript
-# Run upstream R copykat on the canonical exp.rawdata.rda fixture and
-# emit results to TSV so tests/test_r_parity.py can diff them offline.
-#
-# Usage:
-#   Rscript tests/r_reference.R
-#
-# Output:
-#   tests/r_out/exp_rawdata_prediction.tsv — per-cell cell.names + copykat.pred
-#   tests/r_out/exp_rawdata_meta.tsv       — n_genes, n_cells, n_pred rows
-
-suppressPackageStartupMessages({
-  library(copykat)
-})
-
-# Discover the canonical fixture. copykat ships exp.rawdata as
-# data(exp.rawdata), which is equivalent to loading
-# <copykat-installed-path>/data/exp.rawdata.rda.
+# R copykat 1.2.5 on its example data (exp.rawdata, 302 cells of TNBC1), for tests/test_parity.py.
+# Run from tests/:  Rscript r_reference.R
+# Writes the input (converted to data/exp_rawdata.npz by tests/make_exp_npz.py) and R's results:
+#   data/exp_counts.mtx (Matrix Market), data/exp_genes.txt, data/exp_cells.txt  (the input)
+#   data/r_exp_prediction.tsv, data/r_exp_breaks.txt, data/r_exp_preN.txt,
+#   data/r_exp_cna_colsums.txt, data/r_exp_cna_rowsums.txt
+suppressPackageStartupMessages({library(copykat); library(Matrix)})
 data(exp.rawdata, package = "copykat")
-raw <- exp.rawdata
-
-# Find tests/ relative to this script so the output lands in tests/r_out/
-# regardless of where the user invokes Rscript from.
-script_args <- commandArgs(trailingOnly = FALSE)
-file_arg    <- grep("^--file=", script_args, value = TRUE)
-if (length(file_arg) == 1L) {
-  script_path <- sub("^--file=", "", file_arg)
-  here <- normalizePath(dirname(script_path), mustWork = TRUE)
-} else {
-  # Fall back: assume CWD is the repo root.
-  here <- "tests"
-}
-out_dir <- file.path(here, "r_out")
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-cat(sprintf("[R] fixture: %d genes x %d cells\n", nrow(raw), ncol(raw)))
-
-# Run copykat with the same deterministic defaults pycopykat uses by
-# default (see scripts/run_r_copykat.R).
-res <- copykat(
-  rawmat        = as.matrix(raw),
-  id.type       = "S",
-  cell.line     = "no",
-  ngene.chr     = 5,
-  LOW.DR        = 0.05,
-  UP.DR         = 0.1,
-  win.size      = 25,
-  KS.cut        = 0.1,
-  sam.name      = "exp_rawdata",
-  distance      = "euclidean",
-  output.seg    = "FALSE",
-  plot.genes    = "FALSE",
-  genome        = "hg20",
-  n.cores       = 1L
-)
-
-pred <- res$prediction
-pred_df <- data.frame(
-  cell.names   = as.character(pred$cell.names),
-  copykat.pred = as.character(pred$copykat.pred),
-  stringsAsFactors = FALSE
-)
-
-pred_path <- file.path(out_dir, "exp_rawdata_prediction.tsv")
-write.table(
-  pred_df,
-  file      = pred_path,
-  sep       = "\t",
-  quote     = FALSE,
-  row.names = FALSE
-)
-
-meta_path <- file.path(out_dir, "exp_rawdata_meta.tsv")
-write.table(
-  data.frame(
-    key   = c("n_genes_in", "n_cells_in", "n_pred_rows"),
-    value = c(nrow(raw), ncol(raw), nrow(pred_df))
-  ),
-  file      = meta_path,
-  sep       = "\t",
-  quote     = FALSE,
-  row.names = FALSE
-)
-
-cat(sprintf("[R] wrote: %s (%d rows)\n", pred_path, nrow(pred_df)))
-cat(sprintf("[R] wrote: %s\n", meta_path))
+m <- as.matrix(exp.rawdata)
+dir.create("data", showWarnings = FALSE)
+writeMM(Matrix(m, sparse = TRUE), "data/exp_counts.mtx")
+writeLines(rownames(m), "data/exp_genes.txt"); writeLines(colnames(m), "data/exp_cells.txt")
+ns <- asNamespace("copykat"); dbg <- new.env()
+suppressMessages({
+  trace("baseline.norm.cl", exit = bquote(assign("bnc", returnValue(), envir = .(dbg))), where = ns, print = FALSE)
+  trace("CNA.MCMC", exit = bquote(assign("mcmc", returnValue(), envir = .(dbg))), where = ns, print = FALSE)
+})
+wd <- getwd(); tmp <- tempfile(); dir.create(tmp); setwd(tmp)
+res <- copykat(rawmat = m, id.type = "S", ngene.chr = 5, win.size = 25, KS.cut = 0.1, sam.name = "exp",
+               distance = "euclidean", norm.cell.names = "", output.seg = "FALSE", plot.genes = "FALSE",
+               genome = "hg20", n.cores = 1)
+setwd(wd)
+write.table(res$prediction, "data/r_exp_prediction.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+writeLines(as.character(dbg$mcmc$breaks), "data/r_exp_breaks.txt")
+writeLines(dbg$bnc$preN, "data/r_exp_preN.txt")
+cna <- data.matrix(res$CNAmat[, -(1:3)])
+writeLines(sprintf("%.17g", colSums(cna)), "data/r_exp_cna_colsums.txt")
+writeLines(sprintf("%.17g", rowSums(cna)), "data/r_exp_cna_rowsums.txt")
