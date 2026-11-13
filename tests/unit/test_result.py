@@ -9,18 +9,17 @@ def _toy_result():
         np.zeros((5, 3)),
         columns=["c1", "c2", "c3"],
         index=pd.MultiIndex.from_tuples(
-            [(1, 100, 200), (1, 200, 300), (1, 300, 400), (2, 100, 200), (2, 200, 300)],
-            names=["chrom", "start", "end"],
+            [(1, 200, 200), (1, 300, 300), (1, 400, 400), (2, 200, 600), (2, 300, 700)],
+            names=["chrom", "chrompos", "abspos"],
         ),
     )
     pred = pd.DataFrame(
-        {"cell": ["c1", "c2", "c3"], "copykat.pred": ["aneuploid", "diploid", "diploid"]}
+        {"cell.names": ["c1", "c2", "c3"], "copykat.pred": ["aneuploid", "diploid", "diploid"]}
     )
     return CopykatResult(
         cna_mat=cna,
         prediction=pred,
-        linkage=np.zeros((2, 4)),
-        subclone=pd.Series(["c1"], index=["c1"]),
+        hclustering=None,
         warnings=("ok",),
     )
 
@@ -37,7 +36,7 @@ def test_to_txt_writes_r_compatible_files(tmp_path):
     r.to_txt(tmp_path, "sam")
     cna = pd.read_csv(tmp_path / "sam_copykat_CNA_results.txt", sep="\t")
     pred = pd.read_csv(tmp_path / "sam_copykat_prediction.txt", sep="\t")
-    assert {"chrom", "start", "end", "c1", "c2", "c3"}.issubset(cna.columns)
+    assert {"chrom", "chrompos", "abspos", "c1", "c2", "c3"}.issubset(cna.columns)
     assert len(cna) == 5
     assert pred["copykat.pred"].tolist() == ["aneuploid", "diploid", "diploid"]
 

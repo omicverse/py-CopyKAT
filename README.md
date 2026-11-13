@@ -1,232 +1,82 @@
 # pycopykat
 
-A pure-Python re-implementation of [CopyKAT](https://github.com/navinlabcode/copykat) (Gao et al., *Nat Biotechnol* 2021) — aneuploid / diploid classification and bin-level CNA calling from scRNA-seq counts. Drop-in for the scanpy / AnnData ecosystem.
+A Python implementation of [CopyKAT](https://github.com/navinlabcode/copykat) (Gao et al., *Nat Biotechnol* 2021): copy-number profiles of single cells in 220 kb bins and the call of each cell as aneuploid (tumour) or diploid (normal) from scRNA-seq UMI counts.
 
-- AnnData-native — drop-in for the scanpy ecosystem (`copykat_by_batch` iterates over a `.h5ad` batch key)
-- **No `rpy2`**, no R install — the full CopyKAT pipeline (filter → VST → annotate → Kalman smoothing → KS breakpoints → MCMC segmentation → GMM baseline → Ward clustering → per-cell prediction) is implemented directly in NumPy / SciPy / Numba
-- Same function surface as the R workflow (`annotateGenes.hg20` / `annotateGenes.mm10` / `baseline.GMM` / `baseline.norm.cl` / `CNA.MCMC` / `convert.all.bins.hg20` / `copykat`) — see [What's included](#whats-included)
-- Both human (**hg20**) and mouse (**mm10**) genomes supported
-- 17-patient 5-cancer benchmark vs R copykat: **median py↔R ARI 0.988**, **median wall-clock 23.4× faster** on 8 cores ([`benchmarks/full/FINDINGS.md`](benchmarks/full/FINDINGS.md))
+**Status:** v0.2.0 — reproduces R copykat 1.2.5. With the same seed pycopykat gives R's breakpoints, R's baseline cells and R's call for every cell; the copy-number matrices agree to about 1e-10. On six breast tumours of the CopyKAT paper it ran 3.5 to 14 times faster than R on one thread. See *Reproducing R* below and [`report/`](report/).
 
-> This is a **candidate standalone mirror** of the canonical implementation that will live in [`omicverse`](https://github.com/Starlitnightly/omicverse) (`omicverse.external.copykat_py`). Algorithmic work is developed here first and synced upstream for users who want CopyKAT without the full omicverse stack.
-
-## Install
+## Installation
 
 ```bash
 pip install pycopykat
 ```
 
-or, from source with [uv](https://docs.astral.sh/uv/):
+Python 3.10–3.12. The wheel bundles R copykat's reference tables (hg20 and mm10 gene positions, the 220 kb bins, the cell-cycle genes), identical to the package's `sysdata.rda`.
 
-```bash
-uv sync
-```
-
-Python 3.10–3.12 supported. Pure-Python wheel — no compiler required.
-
-## Quick-start
+## Usage
 
 ```python
 import pandas as pd
-from pycopykat import copykat, CopykatConfig
+from pycopykat import CopykatConfig, copykat
 
-counts = pd.read_csv("counts.tsv", sep="\t", index_col=0)  # genes × cells, raw ints
+counts = pd.read_csv("counts.tsv", sep="\t", index_col=0)     # genes x cells, raw UMI counts
+res = copykat(counts, CopykatConfig(id_type="Symbol", genome="hg20", n_jobs=8))
 
-result = copykat(counts, config=CopykatConfig(sam_name="sample1", n_jobs=8))
-
-result.prediction   # DataFrame[cell, copykat.pred] — aneuploid / diploid / not.defined
-result.cna_mat      # bin × cell CNA matrix (MultiIndex: chrom, start, end)
-result.linkage      # scipy Ward linkage matrix, (n-1, 4)
-result.subclone     # Series: aneuploid cell → subclone label (int)
-result.warnings     # runtime warnings (tuple[str, ...])
+res.prediction        # cell.names, copykat.pred  (as R's res$prediction)
+res.cna_mat           # bins x cells, index (chrom, chrompos, abspos)  (R's res$CNAmat)
+res.hclustering       # R hclust of the cells (merge, height, order)
+res.to_txt("out/", "sample")
 ```
 
-### AnnData batch driver
+`copykat` also takes an `AnnData` (cells x genes, counts in `X`). The arguments of `CopykatConfig` are those of R `copykat()` with the same defaults: `id_type` (`"Symbol"`/`"Ensembl"`), `genome` (`"hg20"`/`"mm10"`), `cell_line`, `ngene_chr`, `min_gene_per_cell`, `low_dr`, `up_dr`, `win_size`, `ks_cut`, `distance` (`"euclidean"`, `"pearson"`, `"spearman"`) and `norm_cell_names` (known normal cells); `seed` is the value R copykat passes to `set.seed` (1234), and `n_jobs` sets the threads of the steps without random numbers (results do not depend on it).
 
-For a per-sample scanpy workflow, `copykat_by_batch` iterates over a batch column in a `.h5ad` and concatenates the per-sample predictions:
+Per patient on an AnnData:
 
 ```python
-import anndata as ad
 from pycopykat import copykat_by_batch
-
-adata = ad.read_h5ad("dataset.h5ad")
-preds = copykat_by_batch(adata, batch_key="sample", n_jobs=8)
+adata = copykat_by_batch(adata, batch_key="patient", config=CopykatConfig(n_jobs=8))
+# adata.obs["copykat_pred"], adata.obsm["copykat_cna"], adata.uns["copykat_bins"]
 ```
 
-### CLI
+Command line: `pycopykat run --input counts.tsv --output-dir out/ --sam-name sample`, or `pycopykat run-h5ad --adata data.h5ad --batch-key patient --output out.h5ad`.
 
-```bash
-pycopykat run-h5ad --input dataset.h5ad --batch-key sample --output out/ --n-jobs 8
-```
+In OmicVerse: `ov.single.CNV(adata, method="copykat").run()`.
 
-### Mouse / mm10
+## Reproducing R
 
-```python
-from pycopykat import copykat, CopykatConfig
+pycopykat follows R copykat 1.2.5 (`copykat()` and its helpers) step by step, in R's order of genes and cells:
 
-result = copykat(
-    mouse_counts,                                    # MGI symbols in rows
-    config=CopykatConfig(genome="mm10", n_jobs=8),
-)
-```
+* **Filters and annotation** — the cell and gene filters, the annotation (first entry per symbol, data order, then stably by `abspos`), the removal of HLA and cell-cycle genes and the per-cell chromosome-coverage test (runs of chromosomes over the expressed genes) are R's.
+* **Smoothing** — `log(sqrt(x) + sqrt(x + 1))`, centring, and the local-level Kalman smoother of `dlm` (`dlmModPoly(1, dV = 0.16, dW = 0.001)`); dlm computes on SVD factors, which shifts the first genes of each cell by about 1e-10.
+* **Baseline** — `hclust(ward.D2)` and `cutree` are ported from R's Fortran and C (nearest-neighbour list, tie order, cluster numbering); mixtools' `normalmixEM` (three components, common sigma) is ported with its `normpost` routine, so the EM takes the same iterations; the silhouette, the F test and the GMM fallback (`baseline.GMM`) follow R. Known normal cells and the cell-line mode (`baseline.synthetic`, `set.seed(123)` and `rnorm` per cluster) are supported.
+* **Segmentation** — `CNA.MCMC` draws `MCpoissongamma`, i.e. `rgamma(1000, shape, rate)`, for every window of the cluster medians and for every segment of every cell. R's Mersenne-Twister, `norm_rand` (inversion) and `rgamma` (Ahrens–Dieter GD and GS, `exp_rand`) are ported (`pycopykat._rcompat`); the draws are produced in vectorised form and are identical to R's, so the KS breakpoints and the posterior means are R's. `ks.test` uses R's cumulative sum, and the KS cut-off is lowered as in R when fewer than 25 breakpoints are found.
+* **Bins and calls** — `convert.all.bins.hg20` (gene centres in `[start, end]` with the start taken from the previous bin, empty bins filled from the nearest bin), the v1.2 classification (`ward.D` trees cut at k = 4, 3 or 2, the clusters holding the pre-defined diploid cells, the baseline re-adjustment, the correlation rule and the Wasserstein assignment) and the low-confidence labels are R's.
 
-Mirrors R copykat's mm10 code path: uses `mgi_symbol` as the annotation key and **skips** the HLA / cell-cycle gene filter (upstream behaviour).
+R copykat with `n.cores > 1` does not repeat its own results (`mclapply` children start from unseeded generators); pycopykat always follows the `n.cores = 1` stream.
 
-## Low-level functional API (mirrors R one-to-one)
+Comparison with R copykat 1.2.5 (same seed, `n.cores = 1`):
 
-```python
-from pycopykat.io.annotation import annotate_genes, annotate_gene_names
-from pycopykat.cna.bins import aggregate_to_bins
-from pycopykat.baseline.gmm import baseline_gmm
-from pycopykat.baseline.auto import baseline_norm_cl
-from pycopykat.segment.mcmc import segment_cells
-from pycopykat.viz.heatmap import plot_cna_heatmap
+| sample (GSE148673) | cells | breakpoints | calls identical | max \|ΔCNA\| | pycopykat (s) | R (s) |
+|---|---|---|---|---|---|---|
+| DCIS1 | 1,480 | 231 = 231 | yes | 4.3e-11 | see report | 728 |
+| TNBC1 | 1,097 | 291 = 291 | yes | 5.2e-11 | | 488 |
+| TNBC2 | 1,034 | 267 = 267 | yes | 5.5e-11 | | 439 |
+| TNBC3 | 532 | 326 = 326 | yes | 5.3e-11 | | 222 |
+| TNBC4 | 3,056 | 252 = 252 | yes | 6.2e-11 | | 2,449 |
+| TNBC5 | 3,225 | 219 = 219 | yes | 1.3e-11 | | 2,703 |
 
-# e.g. attach hg20 coordinates to a genes × cells frame
-annotated = annotate_genes(counts, id_type="Symbol", genome="hg20")
-```
-
-## What's included
-
-| Python | R counterpart | Purpose |
-|---|---|---|
-| `pycopykat.copykat` | `copykat` | Unsupervised end-to-end pipeline |
-| `pycopykat.copykat_by_batch` | — | AnnData batch driver (pycopykat-only) |
-| `pycopykat.CopykatConfig`, `CopykatResult` | — | `@dataclass` config / result containers |
-| `io.annotation.annotate_genes`, `annotate_gene_names` | `annotateGenes.hg20`, `annotateGenes.mm10` | Attach gene coordinates; hg20 drops HLA + cycle, mm10 skips filters |
-| `io.annotation.load_hg20_annotation` / `load_mm10_annotation` / `load_hg20_bins` | `full.anno` / `full.anno.mm10` / `DNA.hg20` | Parquet loaders for the reference tables |
-| `cna.bins.aggregate_to_bins` | `convert.all.bins.hg20` | Gene-level CNA → 220 kb bin aggregation |
-| `baseline.gmm.baseline_gmm` | `baseline.GMM` | GMM-based diploid pre-definition |
-| `baseline.auto.baseline_norm_cl` | `baseline.norm.cl` | Integrative-clustering diploid baseline |
-| `segment.mcmc.segment_cells`, `segment.breakpoint.find_breakpoints` | `CNA.MCMC` | KS breakpoints + MCMC segmentation |
-| `classify.predict.predict_ploidy`, `classify.subclone.dynamic_tree_cut` | (inside `copykat`) | Per-cell prediction + subclone cutting |
-| `viz.heatmap.plot_cna_heatmap` | `heatmap.3` | CNA heatmap rendering |
-| `kernels.{pdist_euclidean, kalman_smooth, pg_posterior_mean, ...}` | internal Rcpp | Numba / BLAS hot-kernel implementations |
-| `validation.{compare_predictions, compare_cna, run_r_copykat}` | — | R-parity harness (pycopykat-only) |
-
-## Reproducing R results
-
-pycopykat targets **empirical py↔R agreement on the same counts matrix under the unsupervised auto-baseline**, not bit-exact reproduction of every intermediate. Per-stage parity:
-
-| Stage | Status vs R copykat |
-|---|---|
-| gene × cell preprocessing (filter + VST + log-Freeman–Tukey) | **bit-exact** on dense fixtures (≤ 1e-12) |
-| 220 kb bin aggregation + DLM smoother (Kalman) | **bit-exact** up to float64 rounding (≤ 1e-10) |
-| euclidean pdist (hot path) | ≤ 1e-8 absolute error vs `scipy.spatial.distance.pdist` |
-| GMM baseline selection | **approximate** (sklearn GMM vs R `mixtools::normalmixEM`) |
-| hierarchical clustering | **approximate** (scipy ward.D2 vs R `hclust(ward.D)`) |
-| dynamic tree cut | **approximate** (`dynamicTreeCut` V1 port) |
-| per-cell prediction | **empirical: median ARI 0.988 / κ 0.994** on 17-patient sweep |
-
-Full mechanism breakdown of the 5 / 17 patients where py and R diverge: [`benchmarks/full/FINDINGS.md`](benchmarks/full/FINDINGS.md).
-
-### Generating the R reference
-
-```bash
-Rscript tests/r_reference.R
-uv run pytest tests/test_r_parity.py -v
-```
-
-`tests/r_reference.R` runs R copykat on the `exp.rawdata` fixture bundled with the upstream package and writes `tests/r_out/*.tsv`. The Python-side test skips cleanly when those TSVs are absent.
-
-## py↔R comparison notebooks
-
-Two end-to-end notebooks under `examples/` drive a side-by-side comparison
-against R copykat using **omicverse** for visualisation (Venn / confusion
-matrix / UMAP overlay / per-cluster aneuploid fraction / bin-level CNA
-agreement / side-by-side and Δ heatmaps):
-
-| Notebook | Sample(s) | Mode | Demonstrates |
-|---|---|---|---|
-| `examples/compare_py_vs_R.ipynb` | `exp.rawdata` (302 cells) | runs both implementations inline | clean parity case (ARI = 1.000, per-cell CNA Pearson median 0.97) |
-| `examples/compare_py_vs_R_realdata.ipynb` | Gao/TNBC1 (1,097), Kim/P0019 (2,945), Qian/11 (6,972) — three cancers | reads cached outputs from `benchmarks/full/<cancer>/<sample>/{r_out,py_out}/` | three high-ARI samples with a 1k → 7k cell-count ladder: classification ARI 0.994 – 1.000, per-cell CNA Pearson median 0.85 – 0.97, **end-to-end speedup 23.5× / 46.8× / 82.4×** vs R copykat on 8 cores |
-
-The Lee2020/SMC16 outlier (ARI = 0.342) is documented separately at [`benchmarks/full/FINDINGS.md → Known parity gap`](benchmarks/full/FINDINGS.md). It is intentionally not used as a demo — the realdata notebook focuses on matched samples to showcase the speedup story.
-
-### Running them
-
-The compare notebooks need `omicverse + matplotlib_venn + pyreadr + pycopykat`
-in the same Python environment with a registered Jupyter kernel. The
-project ships an `examples` extras group:
-
-```bash
-# in a conda env that you'll register as a Jupyter kernel
-pip install -e ".[examples]"
-python -m ipykernel install --user --name <kernel-name>
-
-# generate + execute (kernel name overridable; defaults to `omicverse`)
-PYCOPYKAT_KERNEL=<kernel-name> python examples/_build_notebooks.py
-```
-
-`examples/_build_notebooks.py` accepts target subsets:
-
-```bash
-python examples/_build_notebooks.py compare              # exp.rawdata only
-python examples/_build_notebooks.py compare-realdata     # 3-sample real-tumour sweep
-python examples/_build_notebooks.py --no-execute         # rebuild .ipynb without running
-```
-
-### R driver for the inline notebook
-
-`examples/r_driver_compare.R` is a thin wrapper that calls `copykat()`
-on a counts TSV and emits stable filenames (`prediction.tsv`,
-`cna.tsv`, `runinfo.txt`) so the Python notebook can read deterministic
-paths regardless of `sam.name`. The 17-patient benchmark uses a
-different driver (`scripts/run_r_copykat.R`) — both are kept because
-`scripts/run_r_copykat.R` writes copykat's full diagnostic file set
-under standard names that `compare_py_vs_R_realdata.ipynb` reads
-directly.
-
-### Side-by-side CNA heatmap API
-
-The two notebooks share `pycopykat.viz` helpers:
-
-```python
-from pycopykat.viz import plot_cna_heatmap_compare, plot_cna_delta
-
-ax_py, ax_r = plot_cna_heatmap_compare(
-    py_cna, r_cna, py_prediction, r_prediction, sort_by="py"
-)
-ax = plot_cna_delta(py_cna, r_cna, py_prediction)
-```
-
-Both accept `ax=` for inline notebook use; both expect `(n_bins, n_cells)`
-DataFrames with a shared bin index and intersected cell columns.
-
-## Reproducing the 17-patient benchmark
-
-The sweep in `benchmarks/full/` is driven by:
-
-1. `scripts/run_all_benchmarks.py` — slices the five per-cancer counts matrices into per-patient `counts.tsv` + `cells.csv` and runs R copykat.
-2. `scripts/run_py_sweep.py` — runs pycopykat on the same per-patient counts and invokes `scripts/compare_py_vs_r.py` to write per-patient `metrics.csv` + `figure_py_vs_R.png`.
-3. `scripts/aggregate_py_vs_r_mechanism.py` — rolls the summary into a mechanism table (matched / R_label_flipped / partial / different_clusters).
-4. `scripts/make_overview_figure.py` — renders the cross-cancer overview figure.
-
-The `cells.csv` `umap1` / `umap2` columns ship from the 3CA release and are used as figure layout only — no external cell-type label is used by any metric.
+The known-normal, cell-line and Pearson-distance modes were checked the same way on TNBC3. `tests/test_parity.py` checks copykat's example data (`exp.rawdata`) against stored R results, and `tests/test_rcompat.py` the R pieces against stored R values; `tests/r_reference.R` and `tests/r_components.R` regenerate them.
 
 ## Testing
 
 ```bash
-uv run pytest tests/unit tests/test_smoke.py          # fast unit + smoke tests (no R)
-uv run pytest tests/test_r_parity.py                  # offline R-parity (skips without tests/r_out/)
-uv run pytest tests/test_regression.py -m slow        # end-to-end vs R copykat (invokes R)
+pip install -e '.[dev]'
+pytest
 ```
-
-## Relationship to omicverse
-
-Developed following the [omicverse-to-developer](https://github.com/omicverse/omicverse-to-developer) `py-<Name>` conventions (pure-Python, no `rpy2` in production code, AnnData-native I/O, Numba only on hot kernels). Upstream integration plan:
-
-- Canonical implementation: `omicverse.external.copykat_py` (pending)
-- Standalone mirror (this repo): same code, same API, without the full omicverse packaging
 
 ## Citation
 
-If you use this package, please cite the original CopyKAT paper:
-
-> Gao R, Bai S, Henderson YC, et al. Delineating copy number and clonal substructure in human tumors from single-cell transcriptomes. Nat Biotechnol. 2021;39(5):599-608. doi:10.1038/s41587-020-00795-2
-
-and acknowledge omicverse / this repository for the Python port.
+Gao R, Bai S, Henderson YC, et al. Delineating copy number and clonal substructure in human tumors from single-cell transcriptomes. *Nat Biotechnol* 39, 599–608 (2021).
 
 ## License
 
-GPL-2.0-or-later — derivative of GPL-2.0 CopyKAT by Ruli Gao.
+GPL-2.0-or-later, as R copykat (GPL-2).
